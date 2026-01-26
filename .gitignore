@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Node / JS
+node_modules/
+dist/
+build/
+.npm
+.bun/
+
+# Google Cloud / Auth
+credentials.json
+token.json
+*.service_account.json
+
+# IDEs
+.idea/
+.vscode/
+.DS_Store
+
+# Logs
+*.log
+
+# Backend specific
+backend/venv/
+backend/.env
+backend/credentials.json
+backend/token.json
