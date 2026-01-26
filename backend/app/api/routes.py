@@ -31,11 +31,22 @@ async def process_emails():
             body, attachments, metadata = gmail_service.parse_email_message(email_data)
             email_status = gmail_service.classify_email_status(body)
 
+            # Filter: Only process if Pre-alert or Draft
+            if email_status == EmailStatus.UNKNOWN:
+                print(f"Skipping email {metadata['source_email_id']} (Status: UNKNOWN)")
+                continue
+
+            print(f"Processing email {metadata['source_email_id']} (Status: {email_status})")
+
             for att in attachments:
                 summary.attachments_processed += 1
                 try:
-                    # 3. Process PDF
-                    file_bytes = att['data']
+                    # 3. Process PDF (Fetch content lazily)
+                    file_bytes = gmail_service.fetch_attachment_blob(metadata['source_email_id'], att)
+                    if not file_bytes:
+                         print(f"Could not fetch content for {att['filename']}")
+                         continue
+
                     pages = pdf_service.extract_text_from_pdf(file_bytes)
                     # TODO: Implement logic to group pages into single documents
                     for page in pages:
@@ -45,6 +56,10 @@ async def process_emails():
 
                         dedupe_key = generate_dedupe_key(metadata['source_email_id'], att['filename'], page['page_num'])
                         # TODO: Check for duplicates
+
+                        # Placeholder: Store dummy result to verify flow (will implement extraction next)
+                        # We need to eventually create ExtractionResult and save to Firestore
+
                 except Exception as e:
                     print(f"Error processing attachment {att['filename']}: {e}")
                     summary.errors += 1

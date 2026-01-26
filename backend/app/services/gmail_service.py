@@ -14,6 +14,9 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 logger = logging.getLogger(__name__)
 
+
+import re
+
 def get_gmail_service():
     creds = None
     if os.path.exists(settings.GMAIL_TOKEN_FILE):
@@ -42,6 +45,12 @@ def fetch_recent_emails(limit: int = 10) -> List[dict]:
 
     email_data = []
     for msg in messages:
+        # We only need 'full' format to get the body structure,
+        # but we don't strictly need to download massive attachments yet if we look at structure.
+        # However, for simplicity, 'full' is fine as long as we don't eagerly download attachment data blobb.
+        # The 'get' method with format='full' does return attachment metadata but not the data itself usually unless requested?
+        # Actually standard Gmail API 'full' returns payload but attachment data is a separate ID reference usually,
+        # unless it's small.
         full_msg = service.users().messages().get(userId='me', id=msg['id']).execute()
         email_data.append(full_msg)
 
@@ -53,9 +62,57 @@ def get_header(headers: List[dict], name: str) -> str:
             return h['value']
     return ""
 
+def extract_latest_body(body: str) -> str:
+    """
+    Extracts the latest message body by removing quoted replies and signatures.
+    """
+    if not body:
+        return ""
+
+    # Common separators for replies/forwards (flexible regex)
+    # 1. On ... wrote:
+    # 2. -----Original Message-----
+    # 3. From: ... Sent: ...
+    # 4. Sent from my ... (Signature)
+
+    # We split by these patterns and take the first part.
+
+    # Regex for "On <date> <person> wrote:"
+    # This handles various date formats and variations
+    on_wrote_pattern = r'On\s+.*wrote:[\s\S]*'
+
+    # Regex for original message block
+    original_msg_pattern = r'-+\s*Original Message\s*-+[\s\S]*'
+
+    # Regex for From: header block usually found in forwards/replies
+    # Captures "From: ... \n Date: ..." or "From: ... \n Sent: ..."
+    # allowing for indentation
+    from_header_pattern = r'\n\s*From:.*[\r\n]+\s*(?:Sent|Date):.*[\s\S]*'
+
+    # Regex for "Sent from my" signature
+    sent_from_pattern = r'\n\s*Sent from my.*'
+
+    cleaned = body
+
+    # specific explicit splitters first (simple strings)
+    simple_splitters = ["-----Original Message-----", "----- Original Message -----"]
+    for s in simple_splitters:
+        if s in cleaned:
+            cleaned = cleaned.split(s)[0]
+
+    # Regex cleaning
+    cleaned = re.sub(on_wrote_pattern, '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(original_msg_pattern, '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(from_header_pattern, '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(sent_from_pattern, '', cleaned, flags=re.IGNORECASE)
+
+    return cleaned.strip()
+
+
 def parse_email_message(message: dict) -> Tuple[str, List[dict], dict]:
     """
-    Returns: (newest_body, attachments, metadata)
+    Parses the email to get body and attachment METADATA (not content).
+    Returns: (newest_body, attachment_summaries, metadata)
     """
     payload = message.get('payload', {})
     headers = payload.get('headers', [])
@@ -80,49 +137,60 @@ def parse_email_message(message: dict) -> Tuple[str, List[dict], dict]:
         if part.get('mimeType') == 'text/plain' and 'data' in part.get('body', {}):
              data = part['body']['data']
              decoded_data = base64.urlsafe_b64decode(data).decode('utf-8')
-             # quick fix: only grab the first text part.
-             # TODO: usually the first one is the actual body, subsequent ones might be html/signatures.
              if not body:
                  body = decoded_data
 
-        # Extract Attachments
+        # Identify Attachments (Metadata only)
         filename = part.get('filename')
         if filename and filename.lower().endswith('.pdf'):
-            if 'data' in part['body']:
-                file_data = part['body']['data']
-            elif 'attachmentId' in part['body']:
-                 service = get_gmail_service()
-                 att = service.users().messages().attachments().get(
-                    userId='me', messageId=message['id'], id=part['body']['attachmentId']).execute()
-                 file_data = att['data']
-            else:
-                file_data = None
+            attachment_id = part['body'].get('attachmentId')
+            # Sometimes data is inline if small
+            inline_data = part['body'].get('data')
 
-            if file_data:
-                attachments.append({
-                    "filename": filename,
-                    "data": base64.urlsafe_b64decode(file_data)
-                })
+            attachments.append({
+                "filename": filename,
+                "attachmentId": attachment_id,
+                "mimeType": part.get('mimeType'),
+                "inlineData": inline_data # Might be None
+            })
 
-    return body, attachments, metadata
+    # Clean the body
+    newest_body = extract_latest_body(body)
+
+    return newest_body, attachments, metadata
+
+def fetch_attachment_blob(message_id: str, attachment: dict) -> Optional[bytes]:
+    """
+    Fetches the actual content of an attachment.
+    """
+    if attachment.get('inlineData'):
+        return base64.urlsafe_b64decode(attachment['inlineData'])
+
+    if attachment.get('attachmentId'):
+        try:
+            service = get_gmail_service()
+            att = service.users().messages().attachments().get(
+                userId='me', messageId=message_id, id=attachment['attachmentId']).execute()
+
+            if 'data' in att:
+                return base64.urlsafe_b64decode(att['data'])
+        except Exception as e:
+            logger.error(f"Failed to fetch attachment {attachment.get('filename')}: {e}")
+            return None
+
+    return None
 
 def classify_email_status(body: str) -> EmailStatus:
-    # trying to grab just the latest message.
-    # TODO: improve this, maybe use a library like email-reply-parser?
-    # Ideally we should strip quoted text first.
-
     lower_body = body.lower()
 
-    # Simple splitting for newest body
-    separators = ["-----original message-----", "from:", "on ... wrote:", "sent from my"]
-    for sep in separators:
-        if sep in lower_body:
-            lower_body = lower_body.split(sep)[0]
-
-    if any(x in lower_body for x in ["pre-alert", "pre alert", "pré-alerte", "prealert"]):
+    # Pre-alert keywords
+    pre_alert_keywords = ["pre-alert", "pre alert", "pré-alerte", "prealert"]
+    if any(x in lower_body for x in pre_alert_keywords):
         return EmailStatus.PRE_ALERT
 
-    if any(x in lower_body for x in ["draft", "b/l draft", "bl draft", "b/l to confirm"]):
+    # Draft keywords
+    draft_keywords = ["draft", "b/l draft", "bl draft", "b/l to confirm", "draft bl"]
+    if any(x in lower_body for x in draft_keywords):
         return EmailStatus.DRAFT
 
     return EmailStatus.UNKNOWN
