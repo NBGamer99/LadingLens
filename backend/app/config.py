@@ -20,22 +20,33 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file="../.env", extra="ignore")
 
+    def _resolve_path(self, file_path: str) -> str:
+        """Resolve a path relative to the project root."""
+        path = Path(file_path)
+        if path.is_absolute():
+            return str(path)
+        # Project root is parent of backend (which is parent of app, which is parent of config.py)
+        project_root = Path(__file__).parent.parent.parent
+        resolved_path = project_root / path
+        return str(resolved_path)
+
+    @property
+    def gmail_credentials_path(self) -> str:
+        return self._resolve_path(self.GMAIL_CREDENTIALS_FILE)
+
+    @property
+    def gmail_token_path(self) -> str:
+        return self._resolve_path(self.GMAIL_TOKEN_FILE)
+
     @property
     def google_creds_path(self) -> Optional[str]:
         if not self.GOOGLE_APPLICATION_CREDENTIALS:
             return None
-
-        path = Path(self.GOOGLE_APPLICATION_CREDENTIALS)
-        if path.is_absolute():
-            return str(path)
-
-        # Assume relative to project root
-        project_root = Path(__file__).parent.parent.parent
-        resolved_path = project_root / path
-        return str(resolved_path)
+        return self._resolve_path(self.GOOGLE_APPLICATION_CREDENTIALS)
 
 settings = Settings()
 
 # Set environment variable for Google SDKs
 if settings.google_creds_path:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_creds_path
+

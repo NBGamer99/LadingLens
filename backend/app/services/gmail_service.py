@@ -19,42 +19,59 @@ import re
 
 def get_gmail_service():
     creds = None
-    if os.path.exists(settings.GMAIL_TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(settings.GMAIL_TOKEN_FILE, SCOPES)
+    if os.path.exists(settings.gmail_token_path):
+        creds = Credentials.from_authorized_user_file(settings.gmail_token_path, SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if not os.path.exists(settings.GMAIL_CREDENTIALS_FILE):
-                raise FileNotFoundError(f"Credentials file {settings.GMAIL_CREDENTIALS_FILE} not found. Please add it to the backend directory.")
+            if not os.path.exists(settings.gmail_credentials_path):
+                raise FileNotFoundError(f"Credentials file {settings.gmail_credentials_path} not found. Please add it to the backend directory.")
 
             flow = InstalledAppFlow.from_client_secrets_file(
-                settings.GMAIL_CREDENTIALS_FILE, SCOPES)
+                settings.gmail_credentials_path, SCOPES)
             creds = flow.run_local_server(port=0)
 
-        with open(settings.GMAIL_TOKEN_FILE, 'w') as token:
+        with open(settings.gmail_token_path, 'w') as token:
             token.write(creds.to_json())
 
     return build('gmail', 'v1', credentials=creds)
 
 def fetch_recent_emails(limit: int = 10) -> List[dict]:
+    """
+    Fetches the most recent emails, but only the latest message per thread.
+    This prevents processing both an original email and its replies separately.
+    """
     service = get_gmail_service()
-    results = service.users().messages().list(userId='me', maxResults=limit).execute()
+    # Fetch more than the limit since we'll dedupe by thread
+    results = service.users().messages().list(userId='me', maxResults=limit * 3).execute()
     messages = results.get('messages', [])
 
-    email_data = []
+    # Fetch full message data
+    all_messages = []
     for msg in messages:
-        # We only need 'full' format to get the body structure,
-        # but we don't strictly need to download massive attachments yet if we look at structure.
-        # However, for simplicity, 'full' is fine as long as we don't eagerly download attachment data blobb.
-        # The 'get' method with format='full' does return attachment metadata but not the data itself usually unless requested?
-        # Actually standard Gmail API 'full' returns payload but attachment data is a separate ID reference usually,
-        # unless it's small.
         full_msg = service.users().messages().get(userId='me', id=msg['id']).execute()
-        email_data.append(full_msg)
+        all_messages.append(full_msg)
 
-    return email_data
+    # Group by thread ID and keep only the latest message per thread
+    # Gmail returns messages in reverse chronological order (newest first)
+    # so the first message we see for each thread is the latest
+    threads_seen = set()
+    unique_emails = []
+
+    for msg in all_messages:
+        thread_id = msg.get('threadId')
+        if thread_id not in threads_seen:
+            threads_seen.add(thread_id)
+            unique_emails.append(msg)
+
+        # Stop once we have enough unique threads
+        if len(unique_emails) >= limit:
+            break
+
+    logger.info(f"Fetched {len(all_messages)} total messages, deduped to {len(unique_emails)} unique threads")
+    return unique_emails
 
 def get_header(headers: List[dict], name: str) -> str:
     for h in headers:
