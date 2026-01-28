@@ -40,37 +40,42 @@ def get_gmail_service():
 
 def fetch_recent_emails(limit: int = 10) -> List[dict]:
     """
-    Fetches the most recent emails, but only the latest message per thread.
-    This prevents processing both an original email and its replies separately.
+    Fetches the most recent emails using the threads API.
+    Returns only the latest message per thread, which is more efficient
+    and matches the intent of getting unique conversations.
+
+    Uses threads API to reduce API calls from 1+N to 1+limit.
     """
     service = get_gmail_service()
-    # Fetch more than the limit since we'll dedupe by thread
-    results = service.users().messages().list(userId='me', maxResults=limit * 3).execute()
-    messages = results.get('messages', [])
 
-    # Fetch full message data
-    all_messages = []
-    for msg in messages:
-        full_msg = service.users().messages().get(userId='me', id=msg['id']).execute()
-        all_messages.append(full_msg)
+    # Use threads API instead of messages - one thread = one conversation
+    # This is much more efficient: only 1 + limit API calls instead of 1 + N
+    results = service.users().threads().list(userId='me', maxResults=limit).execute()
+    threads = results.get('threads', [])
 
-    # Group by thread ID and keep only the latest message per thread
-    # Gmail returns messages in reverse chronological order (newest first)
-    # so the first message we see for each thread is the latest
-    threads_seen = set()
     unique_emails = []
 
-    for msg in all_messages:
-        thread_id = msg.get('threadId')
-        if thread_id not in threads_seen:
-            threads_seen.add(thread_id)
-            unique_emails.append(msg)
+    for thread in threads:
+        # Fetch the full thread to get all messages
+        full_thread = service.users().threads().get(
+            userId='me',
+            id=thread['id'],
+            format='full'
+        ).execute()
 
-        # Stop once we have enough unique threads
-        if len(unique_emails) >= limit:
-            break
+        thread_messages = full_thread.get('messages', [])
 
-    logger.info(f"Fetched {len(all_messages)} total messages, deduped to {len(unique_emails)} unique threads")
+        if thread_messages:
+            # Sort by internalDate to guarantee newest-first ordering
+            # Gmail does NOT guarantee message ordering in API responses
+            thread_messages.sort(
+                key=lambda m: int(m.get('internalDate', 0)),
+                reverse=True  # Newest first
+            )
+            # Take the latest (newest) message in this thread
+            unique_emails.append(thread_messages[0])
+
+    logger.info(f"Fetched {len(threads)} threads, returning {len(unique_emails)} latest messages")
     return unique_emails
 
 def get_header(headers: List[dict], name: str) -> str:

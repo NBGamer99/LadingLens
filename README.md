@@ -6,14 +6,14 @@ A full-stack automation agent for ingesting, classifying, and extracting data fr
 - **Email Ingestion**: Fetches recent emails from Gmail via API.
 - **Auto-Classification**: Determines "Pre-alert" vs "Draft" status using specific heuristics.
 - **Document Processing**: Extracts text from PDF attachments (HBL/MBL).
-- **AI Extraction**: Uses LLMs (Ollama/Anthropic) via `instructor` and `pydantic-ai` logic to extract structured data (Parties, Containers, Dates).
-- **Deduplication**: Prevents processing the same document twice.
+- **AI Extraction**: Uses LLMs (Ollama/Anthropic) via `pydantic-ai` agents to extract structured data (Parties, Containers, Dates).
+- **Deduplication**: Prevents processing the same document twice using unique hashes.
 - **UI**: Modern React Dashboard (Bun + Vite) for reviewing extracted data.
 
 ## Architecture
 - **Frontend**: React, TailwindCSS, Lucide Icons, Axios.
 - **Backend**: FastAPI (Async), Pydantic, Firestore, Gmail API.
-- **AI**: Instructor (Ollama/Anthropic).
+- **AI**: `pydantic-ai` (agent framework), `pdfplumber` (text extraction).
 
 ## Setup & Running
 

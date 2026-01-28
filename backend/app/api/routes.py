@@ -93,26 +93,62 @@ async def process_emails():
                     pages = pdf_service.extract_text_from_pdf(file_bytes)
                     print(f"      📑 Pages: {len(pages)}")
 
-                    # Classify document type for each page
+                    # Classify and Extract for each page (or group)
+                    # For simplicity, we treat each page as a potential document if it has enough text
                     for page in pages:
                         text = page['text']
-                        if not text.strip():
-                            print(f"      Page {page['page_num']}: (empty)")
+                        if len(text.strip()) < 100:
                             continue
 
-                        doc_type = pdf_service.classify_doc_type_from_text(text)
-                        text_preview = text[:80].replace('\n', ' ').strip()
-                        print(f"      Page {page['page_num']}: {doc_type.value.upper()} - \"{text_preview}...\"")
-
-                        # Generate dedupe key (for future use)
+                        # Generate dedupe key
                         dedupe_key = generate_dedupe_key(metadata['source_email_id'], att['filename'], page['page_num'])
 
-                        # Count as created (even though we're not storing yet)
-                        if doc_type.value != "unknown":
-                            summary.docs_created += 1
+                        # Check if already processed
+                        # We'll check both collections since we don't know the type yet
+                        is_hbl = await firestore_service.document_exists(settings.FIRESTORE_COLLECTION_HBL, dedupe_key)
+                        is_mbl = await firestore_service.document_exists(settings.FIRESTORE_COLLECTION_MBL, dedupe_key)
+
+                        if is_hbl or is_mbl:
+                            print(f"      Page {page['page_num']}: ⏭️  Skipping (Already in Firestore)")
+                            summary.skipped_duplicates += 1
+                            continue
+
+                        print(f"      Page {page['page_num']}: 🤖 Extracting with AI...")
+                        try:
+                            extraction = await extraction_service.extract_data_from_text(text)
+                            # Override email_status from our heuristic if it's UNKNOWN
+                            if extraction.email_status == EmailStatus.UNKNOWN:
+                                extraction.email_status = email_status
+
+                            # Create full result with metadata
+                            result = ExtractionResult(
+                                **extraction.model_dump(),
+                                source_email_id=metadata['source_email_id'],
+                                source_subject=metadata['source_subject'],
+                                source_from=metadata['source_from'],
+                                source_received_at=metadata['source_received_at'],
+                                attachment_filename=att['filename'],
+                                page_range=[page['page_num']],
+                                dedupe_key=dedupe_key,
+                                created_at=datetime.now()
+                            )
+
+                            # Determine collection
+                            collection = settings.FIRESTORE_COLLECTION_HBL if result.doc_type == "hbl" else settings.FIRESTORE_COLLECTION_MBL
+
+                            if result.doc_type != "unknown":
+                                await firestore_service.upsert_document(collection, dedupe_key, result.model_dump())
+                                print(f"      Page {page['page_num']}: ✅ Saved as {result.doc_type.value.upper()} ({result.bl_number})")
+                                summary.docs_created += 1
+                            else:
+                                print(f"      Page {page['page_num']}: ⚠️  Could not identify document type")
+
+                        except Exception as e:
+                            print(f"      Page {page['page_num']}: ❌ Extraction error: {e}")
+                            summary.errors += 1
 
                 except Exception as e:
-                    print(f"      ❌ Error: {e}")
+                    print(f"      ❌ Error processing attachment: {e}")
                     summary.errors += 1
 
         except Exception as e:
@@ -125,6 +161,7 @@ async def process_emails():
     print(f"   Emails processed:    {summary.emails_processed}")
     print(f"   Attachments scanned: {summary.attachments_processed}")
     print(f"   Documents found:     {summary.docs_created}")
+    print(f"   Skipped (Dedupe):    {summary.skipped_duplicates}")
     print(f"   Errors:              {summary.errors}")
     print(f"{'=' * 60}\n")
 
