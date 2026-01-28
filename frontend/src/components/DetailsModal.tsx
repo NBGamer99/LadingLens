@@ -194,7 +194,6 @@ export function DetailsModal({ data, isOpen, onClose }: DetailsModalProps) {
                         {data.containers.map((c, i) => (
                           <tr key={i} className="border-t border-gray-100">
                             <td className="py-2 font-mono text-xs">
-                              {/* {c.number || "-"} */}
                               <Field label="" value={c.number} />
                             </td>
                             <td className="py-2">

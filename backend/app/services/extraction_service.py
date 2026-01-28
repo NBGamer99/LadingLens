@@ -51,10 +51,11 @@ def get_extraction_agent() -> Agent:
                 "Determine if it is a Master Bill of Lading (MBL) or House Bill of Lading (HBL). "
                 "Focus on accurately ensuring the Shipper and Consignee names and addresses are extracted. "
                 "- Shipper: The party sending the goods. Often at the top left.\n"
-                "- Consignee: The party receiving the goods. If it says 'To Order', extract it exactly.\n"
+                "- Consignee: The party receiving the goods.\n"
                 "- Notify Party: Often 'Same as Consignee' or a specific address.\n"
-                "- Carrier: The name of the shipping line or NVOCC (e.g., MSC, MAERSK, CMA CGM). Ignore 'SCAC' codes unless part of the name.\n"
+                "- Carrier: The name of the shipping line (e.g., MSC, MAERSK, CMA CGM). Ignore codes unless part of the name.\n"
                 "Extract container details, parties, and routing info. "
+                "For container volume and weight, provide just the numeric values if possible (e.g., '51.746' instead of '51.746 CBM'). "
                 "If a field is not found, leave it null."
             )
         )
@@ -94,17 +95,6 @@ async def extract_data_from_text(text: str) -> DocumentExtraction:
                 f"Extract data from this document text:\n\nDOCUMENT TEXT:\n{truncated_text}"
             )
             ai_data = result.output
-
-            # Post-process: specific user request to clean up names by taking text before first comma
-            def clean_name(val: Optional[str]) -> Optional[str]:
-                if not val: return None
-                # Split by comma and take first part
-                return val.split(',')[0].strip()
-
-            ai_data.shipper_name = clean_name(ai_data.shipper_name)
-            ai_data.consignee_name = clean_name(ai_data.consignee_name)
-            ai_data.notify_party_name = clean_name(ai_data.notify_party_name)
-
             return ai_data
 
         except Exception as e:
@@ -114,8 +104,5 @@ async def extract_data_from_text(text: str) -> DocumentExtraction:
                 print(f"        ⚠️  Transient API error (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {delay}s...")
                 await asyncio.sleep(delay)
             else:
-                # Non-transient error or final attempt, re-raise
                 raise
-
-    # Should not reach here, but just in case
     raise last_error

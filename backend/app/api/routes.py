@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Depends
 from typing import Optional, List
 import uuid
 import traceback
@@ -12,7 +12,6 @@ from app.services import firestore_service, processing_service
 from pydantic import BaseModel
 
 router = APIRouter()
-
 class JobListResponse(BaseModel):
     """Response for the jobs list endpoint."""
     jobs: List[dict]
@@ -21,6 +20,27 @@ class ProcessResponse(BaseModel):
     """Response from the /process endpoint including job tracking."""
     job_id: str
     summary: ProcessingSummary = None
+class IncidentListResponse(BaseModel):
+    items: List[dict]
+class DocumentQueryParams:
+    """Common query parameters for document retrieval."""
+    def __init__(
+        self,
+        limit: int = Query(4, ge=1, le=100),
+        cursor: Optional[str] = Query(None),
+        carrier: Optional[str] = Query(None, description="Filter by carrier name"),
+        pol: Optional[str] = Query(None, description="Filter by Port of Loading"),
+        pod: Optional[str] = Query(None, description="Filter by Port of Discharge")
+    ):
+        self.limit = limit
+        self.cursor = cursor
+        self.filters = {
+            "carrier": carrier,
+            "pol": pol,
+            "pod": pod
+        }
+        # Remove None values
+        self.filters = {k: v for k, v in self.filters.items() if v is not None}
 
 @router.post("/process", response_model=ProcessResponse)
 async def process_emails_endpoint(
@@ -49,7 +69,8 @@ async def process_emails_endpoint(
             summary = await processing_service.process_emails(jid, dedup)
 
             # Update job status to completed
-            final_status = JobStatus.FAILED.value if summary.errors > 0 and summary.docs_created == 0 else JobStatus.COMPLETED.value
+            # FAILED only if errors occurred AND nothing useful happened (no docs created, no duplicates skipped)
+            final_status = JobStatus.FAILED.value if summary.errors > 0 and summary.docs_created == 0 and summary.skipped_duplicates == 0 else JobStatus.COMPLETED.value
 
             await firestore_service.append_job_log(
                 jid, LogLevel.INFO.value,
@@ -85,47 +106,19 @@ async def process_emails_endpoint(
 
 
 @router.get("/hbl", response_model=PaginatedResponse)
-async def get_hbl(
-    limit: int = Query(4, ge=1, le=100),
-    cursor: Optional[str] = Query(None),
-    carrier: Optional[str] = Query(None, description="Filter by carrier name"),
-    pol: Optional[str] = Query(None, description="Filter by Port of Loading"),
-    pod: Optional[str] = Query(None, description="Filter by Port of Discharge")
-):
+async def get_hbl(params: DocumentQueryParams = Depends()):
     """
     Get HBL documents with cursor-based pagination and optional filters.
     """
-    filters = {
-        "carrier": carrier,
-        "pol": pol,
-        "pod": pod
-    }
-    # Remove None values
-    filters = {k: v for k, v in filters.items() if v is not None}
-
-    result = await firestore_service.get_documents("hbl", limit, cursor, filters)
+    result = await firestore_service.get_documents("hbl", params.limit, params.cursor, params.filters)
     return PaginatedResponse(**result)
 
 @router.get("/mbl", response_model=PaginatedResponse)
-async def get_mbl(
-    limit: int = Query(4, ge=1, le=100),
-    cursor: Optional[str] = Query(None),
-    carrier: Optional[str] = Query(None, description="Filter by carrier name"),
-    pol: Optional[str] = Query(None, description="Filter by Port of Loading"),
-    pod: Optional[str] = Query(None, description="Filter by Port of Discharge")
-):
+async def get_mbl(params: DocumentQueryParams = Depends()):
     """
     Get MBL documents with cursor-based pagination and optional filters.
     """
-    filters = {
-        "carrier": carrier,
-        "pol": pol,
-        "pod": pod
-    }
-    # Remove None values
-    filters = {k: v for k, v in filters.items() if v is not None}
-
-    result = await firestore_service.get_documents("mbl", limit, cursor, filters)
+    result = await firestore_service.get_documents("mbl", params.limit, params.cursor, params.filters)
     return PaginatedResponse(**result)
 
 @router.get("/stats", response_model=DashboardStats)
@@ -161,9 +154,6 @@ async def get_job(job_id: str = Path(..., description="Job ID to retrieve")):
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     return job
 
-class IncidentListResponse(BaseModel):
-    items: List[dict]
-
 @router.get("/incidents", response_model=IncidentListResponse)
 async def get_incidents(limit: int = Query(10, ge=1, le=50)):
     """
@@ -171,7 +161,6 @@ async def get_incidents(limit: int = Query(10, ge=1, le=50)):
     """
     incidents = await firestore_service.get_recent_job_errors(limit)
     return IncidentListResponse(items=incidents)
-
 
 class FilterOptionsResponse(BaseModel):
     """Available filter options from existing data."""

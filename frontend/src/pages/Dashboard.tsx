@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
-import type { ExtractionResult, ProcessingSummary } from "../types";
+import type {
+  ExtractionResult,
+  ProcessingSummary,
+  DashboardStats,
+} from "../types";
 import {
   DataTable,
   DateCell,
@@ -52,6 +56,7 @@ export function Dashboard() {
   const [lastSummary, setLastSummary] = useState<ProcessingSummary | null>(
     null,
   );
+  const [stats, setStats] = useState<DashboardStats | null>(null);
 
   const loadData = useCallback(async (currentFilters = {}) => {
     setIsLoadingData(true);
@@ -70,6 +75,13 @@ export function Dashboard() {
       setMblData(mblResponse.items);
       setMblCursor(mblResponse.next_cursor);
       setMblHasMore(mblResponse.has_more);
+
+      try {
+        const statsResponse = await api.getStats();
+        setStats(statsResponse);
+      } catch (err) {
+        console.warn("Failed to fetch stats:", err);
+      }
 
       setIncidents(incidentsResponse.items);
     } catch (err) {
@@ -345,17 +357,29 @@ export function Dashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard
             label="HBLs Extracted"
-            value={hblData.length > 0 ? hblData.length : "-"}
+            value={
+              stats
+                ? stats.hbl_count
+                : hblData.length > 0
+                  ? hblData.length
+                  : "-"
+            }
             color="text-purple-600"
           />
           <StatCard
             label="MBLs Extracted"
-            value={mblData.length > 0 ? mblData.length : "-"}
+            value={
+              stats
+                ? stats.mbl_count
+                : mblData.length > 0
+                  ? mblData.length
+                  : "-"
+            }
             color="text-emerald-600"
           />
           <StatCard
             label="Total Docs"
-            value={hblData.length + mblData.length}
+            value={stats ? stats.total_docs : hblData.length + mblData.length}
           />
           <StatCard
             label="Recent Errors"

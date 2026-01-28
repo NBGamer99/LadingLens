@@ -65,3 +65,9 @@ export type PaginatedResponse<T = ExtractionResult> = {
     has_more: boolean;
 };
 
+export type DashboardStats = {
+    hbl_count: number;
+    mbl_count: number;
+    total_docs: number;
+};
+

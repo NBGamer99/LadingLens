@@ -34,3 +34,4 @@ assignment.md
 secrets/
 *.pdf
 *.json
+tests/

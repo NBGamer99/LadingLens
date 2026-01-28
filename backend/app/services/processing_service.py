@@ -19,6 +19,10 @@ class ProcessingError(Exception):
 def generate_dedupe_key(email_id: str, filename: str, page_num: int) -> str:
     return hashlib.md5(f"{email_id}_{filename}_{page_num}".encode()).hexdigest()
 
+def generate_failed_attachment_key(email_id: str, filename: str) -> str:
+    """Generate a dedupe key for failed attachments (stored in HBL collection with doc_type=failed)."""
+    return hashlib.md5(f"failed_{email_id}_{filename}".encode()).hexdigest()
+
 async def process_emails(job_id: str, skip_dedupe: bool = False) -> ProcessingSummary:
     """
     Core business logic for processing emails.
@@ -111,12 +115,38 @@ async def process_emails(job_id: str, skip_dedupe: bool = False) -> ProcessingSu
 
                         print(f"      📄 Size: {len(file_bytes)} bytes")
 
+                        # Check if this attachment has previously failed (using existing dedupe pattern)
+                        failed_key = generate_failed_attachment_key(email_id, filename)
+                        if await firestore_service.document_exists(settings.FIRESTORE_COLLECTION_HBL, failed_key):
+                            print(f"      ⏭️  Skipping (Previously failed)")
+                            summary.skipped_duplicates += 1
+                            await firestore_service.append_job_log(
+                                job_id, LogLevel.INFO.value,
+                                f"Skipping previously failed attachment",
+                                email_id=email_id, attachment=filename
+                            )
+                            continue
+
                         # Extract pages
                         try:
                             pages = pdf_service.extract_text_from_pdf(file_bytes)
                         except PDFExtractionError as pdf_err:
                             print(f"      ❌ {pdf_err}")
                             summary.errors += 1
+
+                            # Mark this attachment as failed so we skip it on re-runs
+                            await firestore_service.upsert_document(
+                                settings.FIRESTORE_COLLECTION_HBL,
+                                failed_key,
+                                {
+                                    "doc_type": "failed",
+                                    "source_email_id": email_id,
+                                    "attachment_filename": filename,
+                                    "error": str(pdf_err),
+                                    "created_at": datetime.now().isoformat()
+                                }
+                            )
+
                             await firestore_service.append_job_log(
                                 job_id, LogLevel.ERROR.value,
                                 f"PDF extraction failed: {str(pdf_err)}",

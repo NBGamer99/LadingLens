@@ -1,7 +1,8 @@
 from enum import Enum
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict
-from datetime import datetime
+from typing import List, Optional, Any
+from pydantic import BaseModel, ConfigDict, field_validator
+from datetime import datetime, date
+from dateutil import parser
 
 class EmailStatus(str, Enum):
     PRE_ALERT = "pre_alert"
@@ -14,9 +15,27 @@ class DocType(str, Enum):
     UNKNOWN = "unknown"
 
 class ContainerInfo(BaseModel):
-    weight: Optional[str] = None
-    volume: Optional[str] = None
+    weight: Optional[float] = None
+    volume: Optional[float] = None
     number: Optional[str] = None
+
+    @field_validator('weight', 'volume', mode='before')
+    @classmethod
+    def clean_float(cls, v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        if isinstance(v, (float, int)):
+            return float(v)
+        if isinstance(v, str):
+            # Remove common units and whitespace
+            cleaned = v.upper().replace('KGS', '').replace('CBM', '').replace('KG', '').strip()
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return v
 
 class DocumentExtraction(BaseModel):
     doc_type: DocType
@@ -37,8 +56,37 @@ class DocumentExtraction(BaseModel):
     place_of_delivery: Optional[str] = None
 
     # Dates
-    etd: Optional[str] = None
-    eta: Optional[str] = None
+    etd: Optional[datetime] = None
+    eta: Optional[datetime] = None
+
+    @field_validator('shipper_name', 'consignee_name', 'notify_party_name', mode='before')
+    @classmethod
+    def clean_name(cls, v: Any) -> Optional[str]:
+        if not v:
+            return None
+        if isinstance(v, str):
+            return v.split(',')[0].strip()
+        return v
+
+    @field_validator('etd', 'eta', mode='before')
+    @classmethod
+    def parse_date(cls, v: Any) -> Optional[datetime]:
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v
+        if isinstance(v, date):
+            return datetime.combine(v, datetime.min.time())
+        if isinstance(v, str):
+            if not v.strip():
+                return None
+            try:
+                # Use dateutil parser for flexible date parsing
+                dt = parser.parse(v)
+                return dt
+            except (ValueError, TypeError) as e:
+                return None
+        return v
 
     extraction_confidence: Optional[float] = None
     raw_text_excerpt: Optional[str] = None
@@ -69,12 +117,6 @@ class PaginatedResponse(BaseModel):
     next_cursor: Optional[str] = None
     has_more: bool = False
 
-class JobStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
 class LogLevel(str, Enum):
     INFO = "INFO"
     WARNING = "WARNING"
@@ -84,6 +126,12 @@ class DashboardStats(BaseModel):
     hbl_count: int
     mbl_count: int
     total_docs: int
+
+class JobStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 class JobRecord(BaseModel):
     id: str
@@ -101,7 +149,7 @@ class IncidentSeverity(str, Enum):
     CRITICAL = "critical"
 
 class Incident(BaseModel):
-    id: str = None # Can be composite job_id + index
+    id: str = None
     severity: IncidentSeverity
     message: str
     job_id: Optional[str] = None

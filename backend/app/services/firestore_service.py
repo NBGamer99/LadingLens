@@ -5,13 +5,6 @@ import os
 
 from app.config import settings
 
-
-
-# Initialize Firestore Client
-# In local dev with a service account file, it picks up GOOGLE_APPLICATION_CREDENTIALS
-# or we can pass it explicitly.
-# For this assignment, we assume the credentials.json or default auth is set up.
-
 db: Optional[Client] = None
 
 JOBS_COLLECTION = settings.FIRESTORE_COLLECTION_JOBS
@@ -26,7 +19,6 @@ def get_db() -> Client:
            db = firestore.Client(project=settings.PROJECT_ID)
         except Exception as e:
             print(f"Warning: Could not init Firestore: {e}")
-            # For local testing without real GCP, we might need a mock or just fail.
             raise e
     return db
 
@@ -44,21 +36,21 @@ async def document_exists(collection_name: str, document_id: str) -> bool:
 
 async def get_document_count(collection_name: str) -> int:
     """
-    Get the total count of documents in a collection.
-    Uses Firestore aggregation for efficient counting without fetching documents.
+    Get the total count of documents in a collection, excluding 'failed' ones.
+    Uses Firestore aggregation for efficient counting.
     """
     database = get_db()
     collection_ref = database.collection(collection_name)
 
+    # Filter by specific doc_type (hbl or mbl) to exclude 'failed' and 'unknown'
+    query = collection_ref.where(filter=firestore.FieldFilter("doc_type", "==", collection_name))
+
     # Use aggregation query for efficient count
-    count_query = collection_ref.count()
+    count_query = query.count()
     results = count_query.get()
 
     # Results is a list of AggregationResult objects
-    for result in results:
-        return result[0].value
-
-    return 0
+    return results[0][0].value if results else 0
 
 async def get_documents(collection_name: str, limit: int = 4, cursor: Optional[str] = None, filters: Dict[str, Any] = None) -> Dict[str, Any]:
     """
@@ -67,49 +59,61 @@ async def get_documents(collection_name: str, limit: int = 4, cursor: Optional[s
     Returns: { items: [...], next_cursor: str | None, has_more: bool }
     """
     database = get_db()
-
-    # Base query - only order by created_at (no filters at DB level to avoid index issues)
-    query = database.collection(collection_name)
-    query = query.order_by("created_at", direction=firestore.Query.DESCENDING)
+    filtered_items = []
+    has_more = False
+    current_cursor_doc = None
 
     if cursor:
-        # Cursor is a document ID (dedupe_key)
-        cursor_doc = database.collection(collection_name).document(cursor).get()
-        if cursor_doc.exists:
-            query = query.start_after(cursor_doc)
+        current_cursor_doc = database.collection(collection_name).document(cursor).get()
 
-    # Fetch more documents than needed to account for filtering
-    fetch_limit = (limit + 1) * 10 if filters else limit + 1
-    query = query.limit(fetch_limit)
+    # Loop until we have enough items (limit + 1) or we run out of documents
+    while len(filtered_items) <= limit:
+        # Base query
+        query = database.collection(collection_name)
+        query = query.order_by("created_at", direction=firestore.Query.DESCENDING)
 
-    docs = list(query.stream())
+        if current_cursor_doc and current_cursor_doc.exists:
+            query = query.start_after(current_cursor_doc)
 
-    # Apply filters in-memory
-    filtered_items = []
-    for d in docs:
-        doc_dict = d.to_dict()
-        doc_dict['id'] = d.id
+        # Fetch a reasonable batch size
+        # If filtering, fetch more to improve efficiency
+        batch_size = (limit + 1) * 5 if filters else (limit + 1)
+        query = query.limit(batch_size)
 
-        # Check filters
-        if filters:
-            match = True
-            if "carrier" in filters and doc_dict.get("carrier_name") != filters["carrier"]:
-                match = False
-            if "pol" in filters and doc_dict.get("port_of_loading") != filters["pol"]:
-                match = False
-            if "pod" in filters and doc_dict.get("port_of_discharge") != filters["pod"]:
-                match = False
-
-            if not match:
-                continue
-
-        filtered_items.append(doc_dict)
-
-        # Stop early if we have enough
-        if len(filtered_items) > limit:
+        docs = list(query.stream())
+        if not docs:
             break
 
-    # Check if there are more results
+        # Apply filters in-memory
+        for d in docs:
+            doc_dict = d.to_dict()
+            doc_dict['id'] = d.id
+
+            # Skip failed documents (used only for dedupe tracking)
+            if doc_dict.get("doc_type") == "failed":
+                continue
+
+            # Check filters
+            if filters:
+                match = True
+                if "carrier" in filters and doc_dict.get("carrier_name") != filters["carrier"]:
+                    match = False
+                if "pol" in filters and doc_dict.get("port_of_loading") != filters["pol"]:
+                    match = False
+                if "pod" in filters and doc_dict.get("port_of_discharge") != filters["pod"]:
+                    match = False
+
+                if not match:
+                    continue
+
+            filtered_items.append(doc_dict)
+            if len(filtered_items) > limit:
+                break
+
+        # Update cursor for potential next batch
+        current_cursor_doc = docs[-1]
+
+    # Finalize results
     has_more = len(filtered_items) > limit
     if has_more:
         filtered_items = filtered_items[:limit]
@@ -273,18 +277,30 @@ async def get_recent_job_errors(limit: int = 10) -> List[Dict[str, Any]]:
     """
     Aggregate recent errors from job records.
     Traverses recent jobs and collects their error_details.
+    Deduplicates by email_id + attachment to avoid showing the same error repeatedly.
     """
     # Fetch more jobs than the limit to ensure we find enough errors
     # (assuming not every job has errors)
     jobs = await get_recent_jobs(limit=limit * 2)
 
     incidents = []
+    seen_errors = set()  # Track unique errors by email_id + attachment
 
     for job in jobs:
         if not job.get("error_details"):
             continue
 
         for idx, error in enumerate(job["error_details"]):
+            # Create a unique key for deduplication
+            email_id = error.get("email_id", "")
+            attachment = error.get("attachment", "")
+            dedupe_key = f"{email_id}_{attachment}"
+
+            # Skip if we've already seen this error
+            if dedupe_key in seen_errors:
+                continue
+            seen_errors.add(dedupe_key)
+
             # Normalize to Incident schema structure
             incidents.append({
                 "id": f"{job['id']}_{idx}",
@@ -292,6 +308,7 @@ async def get_recent_job_errors(limit: int = 10) -> List[Dict[str, Any]]:
                 "message": error.get("error", "Unknown error"),
                 "job_id": job['id'],
                 "email_id": error.get("email_id"),
+                "attachment": attachment,
                 "timestamp": error.get("timestamp", job.get("started_at")),
                 "traceback": error.get("traceback")
             })

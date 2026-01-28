@@ -3,7 +3,6 @@ import base64
 from typing import List, Tuple, Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-# Note: InstalledAppFlow is not used - auth tokens are provided with the app
 from googleapiclient.discovery import build
 from google.auth.exceptions import RefreshError
 import logging
@@ -100,12 +99,13 @@ def fetch_recent_emails(limit: int = 10) -> List[dict]:
     Returns only the latest message per thread, which is more efficient
     and matches the intent of getting unique conversations.
 
-    Uses threads API to reduce API calls from 1+N to 1+limit.
+    Message: A single, unique email sent or received. Every "Reply" or "Forward" is its own distinct message with its own unique messageId.
+    Thread: A collection of messages that belong together (a conversation). Gmail groups messages into threads based on headers like In-Reply-To and References.
+
     """
     service = get_gmail_service()
 
-    # Use threads API instead of messages - one thread = one conversation
-    # This is much more efficient: only 1 + limit API calls instead of 1 + N
+
     results = service.users().threads().list(userId='me', maxResults=limit).execute()
     threads = results.get('threads', [])
 
@@ -122,13 +122,10 @@ def fetch_recent_emails(limit: int = 10) -> List[dict]:
         thread_messages = full_thread.get('messages', [])
 
         if thread_messages:
-            # Sort by internalDate to guarantee newest-first ordering
-            # Gmail does NOT guarantee message ordering in API responses
             thread_messages.sort(
                 key=lambda m: int(m.get('internalDate', 0)),
                 reverse=True  # Newest first
             )
-            # Take the latest (newest) message in this thread
             unique_emails.append(thread_messages[0])
 
     logger.info(f"Fetched {len(threads)} threads, returning {len(unique_emails)} latest messages")
@@ -153,27 +150,22 @@ def extract_latest_body(body: str) -> str:
     # 3. From: ... Sent: ...
     # 4. Sent from my ... (Signature)
 
-    # We split by these patterns and take the first part.
-
-    # Regex for "On <date> <person> wrote:"
-    # This handles various date formats and variations
     on_wrote_pattern = r'On\s+.*wrote:[\s\S]*'
 
-    # Regex for original message block
     original_msg_pattern = r'-+\s*Original Message\s*-+[\s\S]*'
 
-    # Regex for From: header block usually found in forwards/replies
-    # Captures "From: ... \n Date: ..." or "From: ... \n Sent: ..."
-    # allowing for indentation
     from_header_pattern = r'\n\s*From:.*[\r\n]+\s*(?:Sent|Date):.*[\s\S]*'
 
-    # Regex for "Sent from my" signature
     sent_from_pattern = r'\n\s*Sent from my.*'
 
     cleaned = body
 
-    # specific explicit splitters first (simple strings)
-    simple_splitters = ["-----Original Message-----", "----- Original Message -----"]
+    simple_splitters = [
+        "-----Original Message-----",
+        "----- Original Message -----",
+        "---------- Forwarded message ---------",
+        "---------- Forwarded message ----------"
+    ]
     for s in simple_splitters:
         if s in cleaned:
             cleaned = cleaned.split(s)[0]
@@ -199,7 +191,7 @@ def parse_email_message(message: dict) -> Tuple[str, List[dict], dict]:
         "source_email_id": message['id'],
         "source_subject": get_header(headers, "Subject"),
         "source_from": get_header(headers, "From"),
-        "source_received_at": message.get('internalDate') # Timestamp ms
+        "source_received_at": message.get('internalDate')
     }
 
     body = ""
@@ -222,7 +214,6 @@ def parse_email_message(message: dict) -> Tuple[str, List[dict], dict]:
         filename = part.get('filename')
         if filename and filename.lower().endswith('.pdf'):
             attachment_id = part['body'].get('attachmentId')
-            # Sometimes data is inline if small
             inline_data = part['body'].get('data')
 
             attachments.append({

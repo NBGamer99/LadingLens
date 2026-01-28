@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { ExtractionResult, ProcessingSummary, PaginatedResponse } from '../types';
+import type { ExtractionResult, ProcessingSummary, PaginatedResponse, DashboardStats } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -37,8 +37,13 @@ export const api = {
         return response.data;
     },
 
-    getFilterOptions: async (): Promise<{ carriers: string[], pols: string[], pods: string[] }> => {
+    async getFilterOptions(): Promise<{ carriers: string[], pols: string[], pods: string[] }> {
         const response = await client.get<{ carriers: string[], pols: string[], pods: string[] }>('/filter-options');
+        return response.data;
+    },
+
+    getStats: async (): Promise<DashboardStats> => {
+        const response = await client.get<DashboardStats>('/stats');
         return response.data;
     }
 };
