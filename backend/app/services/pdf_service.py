@@ -52,6 +52,10 @@ def extract_text_from_pdf(file_bytes: bytes) -> List[Dict[str, Any]]:
     """
     pages_content = []
 
+    # Basic PDF magic byte check
+    if not file_bytes.startswith(b"%PDF-"):
+        raise PDFExtractionError("Invalid PDF: Missing %PDF- header")
+
     # pymupdf4llm requires a file path, so use a temp file
     try:
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
@@ -96,6 +100,10 @@ def extract_text_from_pdf_pages(file_bytes: bytes, page_range: List[int]) -> str
     Returns:
         Cleaned markdown text from the specified pages
     """
+    # Basic PDF magic byte check
+    if not file_bytes.startswith(b"%PDF-"):
+        raise PDFExtractionError("Invalid PDF: Missing %PDF- header")
+
     try:
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
             tmp.write(file_bytes)

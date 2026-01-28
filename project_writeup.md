@@ -24,6 +24,19 @@ One of the key strengths of this implementation is the use of **Pydantic Schemas
 - **FastAPI & Async**: I leveraged FastAPI's background tasks to ensure the UI remains responsive while the heavy lifting happens asynchronously.
 - **Logging**: I'm a big fan of visibility. I added detailed logging throughout the application so I can see exactly what's happening in the terminal at every step.
 
+### 4. Frontend Strategy: Why Vite?
+I chose **Vite** (with React) over Next.js for this dashboard. Here is my reasoning:
+
+| **Feature** | **Vite** | **Next.js** |
+| --- | --- | --- |
+| **Best For** | Single Page Apps (SPAs), internal tools, dashboards. | SEO-heavy sites, public-facing apps, server-side rendering (SSR). |
+| **Startup Speed** | Near-instant cold starts using native ES modules. | Can be slower to initialize, especially with heavy SSR. |
+| **Routing** | Manual (e.g., `react-router-dom`). | Built-in file-based routing. |
+| **Complexity** | Lightweight and unopinionated; you pick your tools. | Opinionated and structured; more "magic" under the hood. |
+| **Backend** | Typically requires a separate backend (like your FastAPI). | Can handle its own backend via API routes. |
+
+**Verdict**: Since this is an internal operational tool where SEO doesn't matter and I already have a dedicated FastAPI backend, Vite's speed and simplicity were the perfect fit.
+
 ---
 
 ## Core Logic Breakdown

@@ -172,6 +172,12 @@ async def process_emails(job_id: str, skip_dedupe: bool = False) -> ProcessingSu
                         for page in pages:
                             text = page['text']
                             if len(text.strip()) < 100:
+                                print(f"      Page {page['page_num']}: ⏭️  Skipping (Insufficient text: {len(text.strip())} chars)")
+                                await firestore_service.append_job_log(
+                                    job_id, LogLevel.WARNING.value,
+                                    f"Skipping page {page['page_num']} - insufficient text ({len(text.strip())} chars)",
+                                    email_id=email_id, attachment=filename
+                                )
                                 continue
 
                             # Generate dedupe key
