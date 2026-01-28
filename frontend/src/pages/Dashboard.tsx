@@ -31,6 +31,7 @@ export function Dashboard() {
   const [mblData, setMblData] = useState<ExtractionResult[]>([]);
   const [mblCursor, setMblCursor] = useState<string | null>(null);
   const [mblHasMore, setMblHasMore] = useState(false);
+  const [incidents, setIncidents] = useState<any[]>([]);
 
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -45,9 +46,10 @@ export function Dashboard() {
     setIsLoadingData(true);
     setError(null);
     try {
-      const [hblResponse, mblResponse] = await Promise.all([
+      const [hblResponse, mblResponse, incidentsResponse] = await Promise.all([
         api.getHBLs(PAGE_SIZE),
         api.getMBLs(PAGE_SIZE),
+        api.getIncidents(10),
       ]);
 
       setHblData(hblResponse.items);
@@ -57,6 +59,8 @@ export function Dashboard() {
       setMblData(mblResponse.items);
       setMblCursor(mblResponse.next_cursor);
       setMblHasMore(mblResponse.has_more);
+
+      setIncidents(incidentsResponse.items);
     } catch (err) {
       console.error("Failed to fetch data:", err);
       setError(
@@ -318,7 +322,7 @@ export function Dashboard() {
           />
           <StatCard
             label="Recent Errors"
-            value={lastSummary?.errors || 0}
+            value={incidents.length}
             color="text-red-500"
           />
         </div>

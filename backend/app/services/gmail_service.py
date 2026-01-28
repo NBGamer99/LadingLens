@@ -39,20 +39,11 @@ def get_gmail_service():
 
     # Check if token file exists
     if not os.path.exists(settings.gmail_token_path):
-        logger.error(f"Token file not found at {settings.gmail_token_path}")
+        logger.error(f"Token file not found")
         raise GmailAuthError(
-            f"Gmail token file not found at '{settings.gmail_token_path}'. "
+            f"Gmail token file not found. "
             "The token.json file should be provided with the application. "
             "Please ensure the secrets/ directory contains a valid token.json file."
-        )
-
-    # Check if credentials file exists
-    if not os.path.exists(settings.gmail_credentials_path):
-        logger.error(f"Credentials file not found at {settings.gmail_credentials_path}")
-        raise GmailAuthError(
-            f"Gmail credentials file not found at '{settings.gmail_credentials_path}'. "
-            "The credentials.json file should be provided with the application. "
-            "Please ensure the secrets/ directory contains a valid credentials.json file."
         )
 
     # Load the token

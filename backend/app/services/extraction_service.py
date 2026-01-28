@@ -1,5 +1,6 @@
 import os
-from typing import Optional, Union
+import asyncio
+from typing import Optional
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -10,6 +11,10 @@ from app.models.schemas import DocumentExtraction
 
 # Lazy-loaded agent to avoid errors at import time
 _extraction_agent: Optional[Agent] = None
+
+# Retry configuration for transient API errors
+MAX_RETRIES = 3
+RETRY_DELAY_BASE = 2  # seconds
 
 
 def get_model():
@@ -44,23 +49,73 @@ def get_extraction_agent() -> Agent:
                 "You are an expert logistics document analyzer. "
                 "Extract key information from the Bill of Lading text provided. "
                 "Determine if it is a Master Bill of Lading (MBL) or House Bill of Lading (HBL). "
+                "Focus on accurately ensuring the Shipper and Consignee names and addresses are extracted. "
+                "- Shipper: The party sending the goods. Often at the top left.\n"
+                "- Consignee: The party receiving the goods. If it says 'To Order', extract it exactly.\n"
+                "- Notify Party: Often 'Same as Consignee' or a specific address.\n"
+                "- Carrier: The name of the shipping line or NVOCC (e.g., MSC, MAERSK, CMA CGM). Ignore 'SCAC' codes unless part of the name.\n"
                 "Extract container details, parties, and routing info. "
                 "If a field is not found, leave it null."
             )
         )
     return _extraction_agent
 
+def _is_transient_error(error: Exception) -> bool:
+    """Check if an error is transient and worth retrying."""
+    error_str = str(error).lower()
+    # Check for common transient error patterns
+    transient_patterns = [
+        "status_code: 500",
+        "status_code: 502",
+        "status_code: 503",
+        "status_code: 504",
+        "internal server error",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "overloaded",
+        "rate limit",
+    ]
+    return any(pattern in error_str for pattern in transient_patterns)
+
 
 async def extract_data_from_text(text: str) -> DocumentExtraction:
     """
-    Extract structured data from document text using Pydantic AI.
-    Uses the LLM provider configured in .env (ollama or anthropic).
+    Extract structured data from document text using AI.
     """
     # safety chop to avoid context window explosion
     truncated_text = text[:15000]
-
     agent = get_extraction_agent()
-    result = await agent.run(
-        f"Extract data from this document text:\n\n{truncated_text}"
-    )
-    return result.output
+
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            result = await agent.run(
+                f"Extract data from this document text:\n\nDOCUMENT TEXT:\n{truncated_text}"
+            )
+            ai_data = result.output
+
+            # Post-process: specific user request to clean up names by taking text before first comma
+            def clean_name(val: Optional[str]) -> Optional[str]:
+                if not val: return None
+                # Split by comma and take first part
+                return val.split(',')[0].strip()
+
+            ai_data.shipper_name = clean_name(ai_data.shipper_name)
+            ai_data.consignee_name = clean_name(ai_data.consignee_name)
+            ai_data.notify_party_name = clean_name(ai_data.notify_party_name)
+
+            return ai_data
+
+        except Exception as e:
+            last_error = e
+            if _is_transient_error(e) and attempt < MAX_RETRIES - 1:
+                delay = RETRY_DELAY_BASE * (2 ** attempt)  # Exponential backoff: 2, 4, 8 seconds
+                print(f"        ⚠️  Transient API error (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {delay}s...")
+                await asyncio.sleep(delay)
+            else:
+                # Non-transient error or final attempt, re-raise
+                raise
+
+    # Should not reach here, but just in case
+    raise last_error

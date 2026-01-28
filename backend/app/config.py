@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     FIRESTORE_COLLECTION_HBL: str = "hbl"
     FIRESTORE_COLLECTION_MBL: str = "mbl"
+    FIRESTORE_COLLECTION_JOBS: str = "jobs"
 
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
 

@@ -69,3 +69,43 @@ class PaginatedResponse(BaseModel):
     next_cursor: Optional[str] = None
     has_more: bool = False
 
+class JobStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class LogLevel(str, Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+
+class DashboardStats(BaseModel):
+    hbl_count: int
+    mbl_count: int
+    total_docs: int
+
+class JobRecord(BaseModel):
+    id: str
+    status: JobStatus
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    summary: ProcessingSummary
+    logs: List[dict] = []
+    error_details: List[dict] = []
+
+class IncidentSeverity(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+class Incident(BaseModel):
+    id: str = None # Can be composite job_id + index
+    severity: IncidentSeverity
+    message: str
+    job_id: Optional[str] = None
+    email_id: Optional[str] = None
+    timestamp: datetime
+    traceback: Optional[str] = None
+

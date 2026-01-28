@@ -30,6 +30,7 @@ backend/venv/
 backend/.env
 backend/credentials.json
 backend/token.json
-project_tracker.md
 assignment.md
 secrets/
+*.pdf
+*.json

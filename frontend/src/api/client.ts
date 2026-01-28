@@ -28,5 +28,12 @@ export const api = {
             params: { limit, cursor }
         });
         return response.data;
+    },
+
+    getIncidents: async (limit: number = 10): Promise<{ items: any[] }> => {
+        const response = await client.get<{ items: any[] }>('/incidents', {
+            params: { limit }
+        });
+        return response.data;
     }
 };
