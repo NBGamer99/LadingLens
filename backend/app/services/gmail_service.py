@@ -3,8 +3,9 @@ import base64
 from typing import List, Tuple, Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+# Note: InstalledAppFlow is not used - auth tokens are provided with the app
 from googleapiclient.discovery import build
+from google.auth.exceptions import RefreshError
 import logging
 
 from app.config import settings
@@ -17,26 +18,90 @@ logger = logging.getLogger(__name__)
 
 import re
 
+
+class GmailAuthError(Exception):
+    """Custom exception for Gmail authentication errors."""
+    pass
+
+
 def get_gmail_service():
+    """
+    Get an authenticated Gmail service instance.
+
+    This function expects auth tokens (token.json and credentials.json) to be
+    pre-configured and provided with the application. It does NOT initiate
+    OAuth flows or prompt users to authenticate.
+
+    Raises:
+        GmailAuthError: When authentication fails (missing/invalid token or credentials)
+    """
     creds = None
-    if os.path.exists(settings.gmail_token_path):
+
+    # Check if token file exists
+    if not os.path.exists(settings.gmail_token_path):
+        logger.error(f"Token file not found at {settings.gmail_token_path}")
+        raise GmailAuthError(
+            f"Gmail token file not found at '{settings.gmail_token_path}'. "
+            "The token.json file should be provided with the application. "
+            "Please ensure the secrets/ directory contains a valid token.json file."
+        )
+
+    # Check if credentials file exists
+    if not os.path.exists(settings.gmail_credentials_path):
+        logger.error(f"Credentials file not found at {settings.gmail_credentials_path}")
+        raise GmailAuthError(
+            f"Gmail credentials file not found at '{settings.gmail_credentials_path}'. "
+            "The credentials.json file should be provided with the application. "
+            "Please ensure the secrets/ directory contains a valid credentials.json file."
+        )
+
+    # Load the token
+    try:
         creds = Credentials.from_authorized_user_file(settings.gmail_token_path, SCOPES)
+    except Exception as e:
+        logger.error(f"Failed to load token file: {e}")
+        raise GmailAuthError(
+            f"Invalid or corrupted token file at '{settings.gmail_token_path}'. "
+            f"Error: {str(e)}"
+        )
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+    # Check if token needs refresh
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            try:
+                logger.info("Token expired, attempting to refresh...")
+                creds.refresh(Request())
+                # Save the refreshed token
+                try:
+                    with open(settings.gmail_token_path, 'w') as token:
+                        token.write(creds.to_json())
+                    logger.info("Token refreshed and saved successfully")
+                except Exception as e:
+                    logger.warning(f"Could not save refreshed token: {e}")
+            except RefreshError as e:
+                logger.error(f"Token refresh failed: {e}")
+                raise GmailAuthError(
+                    "Gmail token has expired and could not be refreshed. "
+                    "The token.json file may need to be regenerated. "
+                    f"Error: {str(e)}"
+                )
+            except Exception as e:
+                logger.error(f"Unexpected error refreshing token: {e}")
+                raise GmailAuthError(f"Failed to refresh Gmail token: {str(e)}")
         else:
-            if not os.path.exists(settings.gmail_credentials_path):
-                raise FileNotFoundError(f"Credentials file {settings.gmail_credentials_path} not found. Please add it to the backend directory.")
+            logger.error("Token is invalid and cannot be refreshed (no refresh token)")
+            raise GmailAuthError(
+                "Gmail token is invalid and cannot be refreshed. "
+                "The token.json file may be incomplete or expired. "
+                "Please provide a valid token.json file with a refresh_token."
+            )
 
-            flow = InstalledAppFlow.from_client_secrets_file(
-                settings.gmail_credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        with open(settings.gmail_token_path, 'w') as token:
-            token.write(creds.to_json())
-
-    return build('gmail', 'v1', credentials=creds)
+    # Build and return the service
+    try:
+        return build('gmail', 'v1', credentials=creds)
+    except Exception as e:
+        logger.error(f"Failed to build Gmail service: {e}")
+        raise GmailAuthError(f"Failed to connect to Gmail API: {str(e)}")
 
 def fetch_recent_emails(limit: int = 10) -> List[dict]:
     """

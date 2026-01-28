@@ -94,39 +94,35 @@ export function Dashboard() {
     loadData();
   }, []);
 
-  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  const handleProcess = () => {
+  const handleProcess = async () => {
     setIsProcessing(true);
     setLastSummary(null);
     setError(null);
-    setProcessingStatus("Starting...");
+    setAuthError(null);
 
-    const cleanup = api.streamProcessing(false, {
-      onDocument: (doc) => {
-        // Add document to the appropriate table in real-time
-        if (doc.doc_type === "hbl") {
-          setHblData((prev) => [doc, ...prev]);
-        } else if (doc.doc_type === "mbl") {
-          setMblData((prev) => [doc, ...prev]);
-        }
-      },
-      onStatus: (message) => {
-        setProcessingStatus(message);
-      },
-      onError: (message) => {
-        console.error("Stream error:", message);
-        setError(message);
-      },
-      onComplete: (summary) => {
-        setLastSummary(summary);
-        setProcessingStatus(null);
-        setIsProcessing(false);
-      },
-    });
-
-    // Cleanup function is available if we need to cancel processing
-    void cleanup;
+    try {
+      const summary = await api.triggerProcessing();
+      setLastSummary(summary);
+      // Reload data after processing completes
+      await loadData();
+    } catch (err: any) {
+      console.error("Processing error:", err);
+      if (err.response?.status === 401) {
+        setAuthError(
+          err.response?.data?.detail ||
+            "Unable to connect to Gmail. Please ensure the authentication tokens are properly configured.",
+        );
+      } else {
+        setError(
+          err.response?.data?.detail ||
+            "Processing failed. Please check the server logs for details.",
+        );
+      }
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const columns = [
@@ -225,7 +221,45 @@ export function Dashboard() {
       <Header />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Error Banner */}
+        {/* Auth Error Banner - More prominent for Gmail authentication issues */}
+        {authError && (
+          <div className="bg-amber-50 border-2 border-amber-400 rounded-lg p-5 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0 bg-amber-100 rounded-full p-2">
+                <AlertCircle className="w-6 h-6 text-amber-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-amber-800">
+                  Gmail Connection Issue
+                </h3>
+                <p className="mt-1 text-sm text-amber-700">{authError}</p>
+                <p className="mt-3 text-xs text-amber-600">
+                  Check the browser console or server logs for technical
+                  details.
+                </p>
+              </div>
+              <button
+                onClick={() => setAuthError(null)}
+                className="flex-shrink-0 text-amber-600 hover:text-amber-800 transition-colors"
+              >
+                <span className="sr-only">Dismiss</span>
+                <svg
+                  className="w-5 h-5"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* General Error Banner */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center justify-between">
             <div className="flex items-center gap-3 text-red-700">
@@ -258,12 +292,6 @@ export function Dashboard() {
               isProcessing={isProcessing}
               onClick={handleProcess}
             />
-            {processingStatus && (
-              <div className="text-xs text-right bg-blue-50 text-blue-700 px-3 py-1 rounded border border-blue-100 flex items-center gap-2">
-                <RefreshCw className="w-3 h-3 animate-spin" />
-                {processingStatus}
-              </div>
-            )}
             {lastSummary && (
               <div className="text-xs text-right text-gray-500 bg-emerald-50 text-emerald-700 px-3 py-1 rounded border border-emerald-100">
                 Processed {lastSummary.emails_processed} emails, created{" "}
