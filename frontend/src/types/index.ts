@@ -58,3 +58,10 @@ export interface ProcessingSummary {
     skipped_duplicates: number;
     errors: number;
 }
+
+export interface PaginatedResponse<T = ExtractionResult> {
+    items: T[];
+    next_cursor: string | null;
+    has_more: boolean;
+}
+

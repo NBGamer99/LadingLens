@@ -9,15 +9,32 @@ import {
 } from "../components/DataTable";
 import { Header } from "../components/Header";
 import { ProcessButton, StatCard } from "../components/ActionComponents";
-import { FileSearch, Layers } from "lucide-react";
+import {
+  FileSearch,
+  Layers,
+  AlertCircle,
+  RefreshCw,
+  ChevronDown,
+} from "lucide-react";
 import { cn } from "../lib/utils";
-// import { Toaster, toast } from "sonner"; // Recommend adding sonner or just use alert for now
+
+const PAGE_SIZE = 4;
 
 export function Dashboard() {
   const [activeTab, setActiveTab] = useState<"hbl" | "mbl">("hbl");
+
+  // Separate state for each tab's data and pagination
   const [hblData, setHblData] = useState<ExtractionResult[]>([]);
+  const [hblCursor, setHblCursor] = useState<string | null>(null);
+  const [hblHasMore, setHblHasMore] = useState(false);
+
   const [mblData, setMblData] = useState<ExtractionResult[]>([]);
+  const [mblCursor, setMblCursor] = useState<string | null>(null);
+  const [mblHasMore, setMblHasMore] = useState(false);
+
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSummary, setLastSummary] = useState<ProcessingSummary | null>(
@@ -26,16 +43,50 @@ export function Dashboard() {
 
   const loadData = async () => {
     setIsLoadingData(true);
+    setError(null);
     try {
-      const hbls = await api.getHBLs(50);
-      const mbls = await api.getMBLs(50);
-      setHblData(hbls);
-      setMblData(mbls);
-    } catch (error) {
-      console.error("Failed to fetch data:", error);
-      // toast.error("Failed to load documents");
+      const [hblResponse, mblResponse] = await Promise.all([
+        api.getHBLs(PAGE_SIZE),
+        api.getMBLs(PAGE_SIZE),
+      ]);
+
+      setHblData(hblResponse.items);
+      setHblCursor(hblResponse.next_cursor);
+      setHblHasMore(hblResponse.has_more);
+
+      setMblData(mblResponse.items);
+      setMblCursor(mblResponse.next_cursor);
+      setMblHasMore(mblResponse.has_more);
+    } catch (err) {
+      console.error("Failed to fetch data:", err);
+      setError(
+        "Failed to load documents. Please check your connection and try again.",
+      );
     } finally {
       setIsLoadingData(false);
+    }
+  };
+
+  const loadMore = async () => {
+    setIsLoadingMore(true);
+    setError(null);
+    try {
+      if (activeTab === "hbl" && hblCursor) {
+        const response = await api.getHBLs(PAGE_SIZE, hblCursor);
+        setHblData((prev) => [...prev, ...response.items]);
+        setHblCursor(response.next_cursor);
+        setHblHasMore(response.has_more);
+      } else if (activeTab === "mbl" && mblCursor) {
+        const response = await api.getMBLs(PAGE_SIZE, mblCursor);
+        setMblData((prev) => [...prev, ...response.items]);
+        setMblCursor(response.next_cursor);
+        setMblHasMore(response.has_more);
+      }
+    } catch (err) {
+      console.error("Failed to load more:", err);
+      setError("Failed to load more documents. Please try again.");
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -43,19 +94,39 @@ export function Dashboard() {
     loadData();
   }, []);
 
-  const handleProcess = async () => {
+  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+
+  const handleProcess = () => {
     setIsProcessing(true);
     setLastSummary(null);
-    try {
-      const summary = await api.triggerProcessing();
-      setLastSummary(summary);
-      await loadData();
-    } catch (error) {
-      console.error("Processing failed:", error);
-      alert("Processing failed. Check console/logs.");
-    } finally {
-      setIsProcessing(false);
-    }
+    setError(null);
+    setProcessingStatus("Starting...");
+
+    const cleanup = api.streamProcessing(false, {
+      onDocument: (doc) => {
+        // Add document to the appropriate table in real-time
+        if (doc.doc_type === "hbl") {
+          setHblData((prev) => [doc, ...prev]);
+        } else if (doc.doc_type === "mbl") {
+          setMblData((prev) => [doc, ...prev]);
+        }
+      },
+      onStatus: (message) => {
+        setProcessingStatus(message);
+      },
+      onError: (message) => {
+        console.error("Stream error:", message);
+        setError(message);
+      },
+      onComplete: (summary) => {
+        setLastSummary(summary);
+        setProcessingStatus(null);
+        setIsProcessing(false);
+      },
+    });
+
+    // Cleanup function is available if we need to cancel processing
+    void cleanup;
   };
 
   const columns = [
@@ -147,12 +218,30 @@ export function Dashboard() {
   ];
 
   const currentData = activeTab === "hbl" ? hblData : mblData;
+  const currentHasMore = activeTab === "hbl" ? hblHasMore : mblHasMore;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <Header />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {/* Error Banner */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3 text-red-700">
+              <AlertCircle className="w-5 h-5" />
+              <span className="text-sm font-medium">{error}</span>
+            </div>
+            <button
+              onClick={() => loadData()}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Actions & Summary Section */}
         <section className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
           <div>
@@ -169,6 +258,12 @@ export function Dashboard() {
               isProcessing={isProcessing}
               onClick={handleProcess}
             />
+            {processingStatus && (
+              <div className="text-xs text-right bg-blue-50 text-blue-700 px-3 py-1 rounded border border-blue-100 flex items-center gap-2">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                {processingStatus}
+              </div>
+            )}
             {lastSummary && (
               <div className="text-xs text-right text-gray-500 bg-emerald-50 text-emerald-700 px-3 py-1 rounded border border-emerald-100">
                 Processed {lastSummary.emails_processed} emails, created{" "}
@@ -214,6 +309,7 @@ export function Dashboard() {
             >
               <FileSearch className="w-4 h-4" />
               House Bills (HBL)
+              {hblHasMore && <span className="text-xs text-gray-400">+</span>}
             </button>
             <button
               onClick={() => setActiveTab("mbl")}
@@ -226,6 +322,7 @@ export function Dashboard() {
             >
               <Layers className="w-4 h-4" />
               Master Bills (MBL)
+              {mblHasMore && <span className="text-xs text-gray-400">+</span>}
             </button>
           </div>
 
@@ -236,6 +333,33 @@ export function Dashboard() {
               isLoading={isLoadingData}
               emptyMessage={`No ${activeTab.toUpperCase()} documents found.`}
             />
+
+            {/* Load More Button */}
+            {currentHasMore && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={loadMore}
+                  disabled={isLoadingMore}
+                  className={cn(
+                    "flex items-center gap-2 px-6 py-2.5 text-sm font-medium rounded-lg transition-all",
+                    "bg-gray-100 hover:bg-gray-200 text-gray-700",
+                    isLoadingMore && "opacity-50 cursor-not-allowed",
+                  )}
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-4 h-4" />
+                      Load More
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </main>

@@ -62,3 +62,10 @@ class ProcessingSummary(BaseModel):
     docs_created: int
     skipped_duplicates: int
     errors: int
+
+class PaginatedResponse(BaseModel):
+    """Response model for paginated endpoints."""
+    items: List[dict]
+    next_cursor: Optional[str] = None
+    has_more: bool = False
+

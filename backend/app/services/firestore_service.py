@@ -37,16 +37,38 @@ async def document_exists(collection_name: str, document_id: str) -> bool:
     doc = doc_ref.get()
     return doc.exists
 
-async def get_documents(collection_name: str, limit: int = 20, cursor: Optional[str] = None) -> List[Dict[str, Any]]:
+async def get_documents(collection_name: str, limit: int = 4, cursor: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Fetch documents with cursor-based pagination.
+    Returns: { items: [...], next_cursor: str | None, has_more: bool }
+    """
     database = get_db()
-    query = database.collection(collection_name).order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit)
+    # Request one extra to determine if there are more results
+    query = database.collection(collection_name).order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit + 1)
 
     if cursor:
-        # For simplicity in this demo, we assume cursor is a document ID
-        # In a real app, you might use a timestamp or a more robust cursor
+        # Cursor is a document ID (dedupe_key)
         cursor_doc = database.collection(collection_name).document(cursor).get()
         if cursor_doc.exists:
             query = query.start_after(cursor_doc)
 
-    docs = query.stream()
-    return [d.to_dict() for d in docs]
+    docs = list(query.stream())
+
+    # Check if there are more results
+    has_more = len(docs) > limit
+    if has_more:
+        docs = docs[:limit]  # Trim to requested limit
+
+    items = []
+    last_doc_id = None
+    for d in docs:
+        doc_dict = d.to_dict()
+        doc_dict['id'] = d.id  # Include document ID for cursor
+        items.append(doc_dict)
+        last_doc_id = d.id
+
+    return {
+        "items": items,
+        "next_cursor": last_doc_id if has_more else None,
+        "has_more": has_more
+    }
