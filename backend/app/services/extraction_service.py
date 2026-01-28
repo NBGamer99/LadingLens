@@ -47,15 +47,31 @@ def get_extraction_agent() -> Agent:
             output_retries=3,
             system_prompt=(
                 "You are an expert logistics document analyzer. "
-                "Extract key information from the Bill of Lading text provided. "
-                "Determine if it is a Master Bill of Lading (MBL) or House Bill of Lading (HBL). "
-                "Focus on accurately ensuring the Shipper and Consignee names and addresses are extracted. "
-                "- Shipper: The party sending the goods. Often at the top left.\n"
-                "- Consignee: The party receiving the goods.\n"
-                "- Notify Party: Often 'Same as Consignee' or a specific address.\n"
-                "- Carrier: The name of the shipping line (e.g., MSC, MAERSK, CMA CGM). Ignore codes unless part of the name.\n"
-                "Extract container details, parties, and routing info. "
-                "For container volume and weight, provide just the numeric values if possible (e.g., '51.746' instead of '51.746 CBM'). "
+                "The document has been converted to Markdown format for better structure. "
+                "Extract key information from the Bill of Lading.\n\n"
+
+                "DOCUMENT TYPE:\n"
+                "- Look for '**HOUSE BILL OF LADING**' or 'HBL' → doc_type = 'hbl'\n"
+                "- Look for '**MASTER BILL OF LADING**' or 'MBL' → doc_type = 'mbl'\n\n"
+
+                "PARTIES (look for bold headers like **SHIPPER**, **CONSIGNEE**):\n"
+                "- Shipper: The party sending the goods (company name only)\n"
+                "- Consignee: The party receiving the goods (company name only)\n"
+                "- Notify Party: If it says 'Same as Consignee', return that exact text\n"
+                "- Carrier: The shipping line name (e.g., CMA CGM, Hapag-Lloyd)\n\n"
+
+                "ROUTING (look for **PORT OF LOADING**, **PORT OF DISCHARGE**):\n"
+                "- Include the full port name with code, e.g., 'Hong Kong, HK (HKHKG)'\n"
+                "- ETD/ETA dates if present\n\n"
+
+                "CONTAINERS (look for Markdown tables with columns):\n"
+                "- Container table has columns: CONTAINER NO., SEAL, TYPE, PKGS, GROSS, CBM\n"
+                "- Extract 'number' from CONTAINER NO. column\n"
+                "- Extract 'weight' from GROSS column (weight in kg, may have space as thousands separator like '15 777.6' = 15777.6)\n"
+                "- Extract 'volume' from CBM column (cubic meters, e.g., '51.746')\n"
+                "- IMPORTANT: Do NOT confuse TYPE (like '40HC') with volume!\n\n"
+
+                "Return just numeric values for weight/volume (no units).\n"
                 "If a field is not found, leave it null."
             )
         )
