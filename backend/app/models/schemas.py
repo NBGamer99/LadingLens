@@ -41,13 +41,15 @@ class DocumentExtraction(BaseModel):
     doc_type: DocType
     bl_number: Optional[str] = None
     email_status: EmailStatus = EmailStatus.UNKNOWN
-    containers: List[ContainerInfo] = []
+    raw_text_excerpt: Optional[str] = None
+    extraction_confidence: Optional[float] = None
 
     # Parties
     shipper_name: Optional[str] = None
     consignee_name: Optional[str] = None
     notify_party_name: Optional[str] = None
     carrier_name: Optional[str] = None
+    containers: List[ContainerInfo] = []
 
     # Routing
     port_of_loading: Optional[str] = None
@@ -87,9 +89,6 @@ class DocumentExtraction(BaseModel):
             except (ValueError, TypeError) as e:
                 return None
         return v
-
-    extraction_confidence: Optional[float] = None
-    raw_text_excerpt: Optional[str] = None
 
 class ExtractionResult(DocumentExtraction):
     # Metadata

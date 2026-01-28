@@ -191,9 +191,10 @@ async def process_emails(job_id: str, skip_dedupe: bool = False) -> ProcessingSu
                                     summary.skipped_duplicates += 1
                                     continue
 
-                            print(f"      Page {page['page_num']}: 🤖 Extracting with AI...")
+                            print(f"      Page {page['page_num']}: 🤖 Extracting with Hybrid Regex+AI...")
                             try:
-                                extraction = await extraction_service.extract_data_from_text(text)
+                                # Use hybrid extraction (regex primary, AI fallback)
+                                extraction = await extraction_service.extract_shipment_data(text)
                                 # Override email_status from our heuristic if it's UNKNOWN
                                 if extraction.email_status == EmailStatus.UNKNOWN:
                                     extraction.email_status = email_status
@@ -290,8 +291,5 @@ async def process_emails(job_id: str, skip_dedupe: bool = False) -> ProcessingSu
              error=str(e),
              traceback_str=traceback.format_exc()
         )
-        # We don't re-raise here because we want to return the partial summary
-        # But we will mark job as failed in the caller or here?
-        # Let's let the caller handle the final status update based on summary/exceptions
 
     return summary

@@ -17,7 +17,7 @@ MAX_RETRIES = 3
 RETRY_DELAY_BASE = 2  # seconds
 
 
-def get_model():
+def _create_llm_model():
     """
     Get the model for pydantic-ai.
     Supports both Ollama (local) and Anthropic (cloud) providers.
@@ -36,12 +36,12 @@ def get_model():
         return OpenAIChatModel(model_name=settings.OLLAMA_MODEL, provider=provider)
 
 
-def get_extraction_agent() -> Agent:
+def _get_or_create_agent() -> Agent:
     """Get or create the extraction agent (lazy loading)."""
     global _extraction_agent
     if _extraction_agent is None:
         _extraction_agent = Agent(
-            model=get_model(),
+            model=_create_llm_model(),
             output_type=DocumentExtraction,
             retries=3,
             output_retries=3,
@@ -96,13 +96,13 @@ def _is_transient_error(error: Exception) -> bool:
     return any(pattern in error_str for pattern in transient_patterns)
 
 
-async def extract_data_from_text(text: str) -> DocumentExtraction:
+async def extract_with_ai(text: str) -> DocumentExtraction:
     """
-    Extract structured data from document text using AI.
+    Extract structured data from document text using AI only.
     """
     # safety chop to avoid context window explosion
     truncated_text = text[:15000]
-    agent = get_extraction_agent()
+    agent = _get_or_create_agent()
 
     last_error = None
     for attempt in range(MAX_RETRIES):
@@ -122,3 +122,100 @@ async def extract_data_from_text(text: str) -> DocumentExtraction:
             else:
                 raise
     raise last_error
+
+
+async def extract_shipment_data(markdown: str, use_ai_fallback: bool = True) -> DocumentExtraction:
+    """
+    Extract structured data from document markdown using hybrid regex + AI approach.
+
+    Strategy:
+    1. Try fast regex extraction first (< 1 second)
+    2. Check if critical fields are missing
+    3. If scanned PDF or many nulls, fallback to AI
+    4. Otherwise, return regex results (fast + cheap)
+
+    Args:
+        markdown: Clean markdown text from PDF
+        use_ai_fallback: If True, use AI for missing fields. If False, return regex only.
+
+    Returns:
+        DocumentExtraction with all extracted fields
+    """
+    from app.services.regex_extractor import extract_all, is_scanned_pdf, RegexExtractionResult
+    from app.models.schemas import ContainerInfo, DocType
+
+    # Step 1: Check if this is a scanned/image PDF
+    if is_scanned_pdf(markdown):
+        # No structure - must use AI
+        if use_ai_fallback:
+            return await extract_with_ai(markdown)
+        else:
+            # Return empty result
+            return DocumentExtraction(doc_type=DocType.UNKNOWN)
+
+    # Step 2: Try regex extraction (fast)
+    regex_result = extract_all(markdown)
+
+    # Step 3: Check for critical missing fields
+    null_fields = regex_result.null_fields()
+
+    # Critical fields that must be present
+    critical_missing = any(f in null_fields for f in ['doc_type', 'bl_number'])
+
+    # If critical fields missing and AI allowed, use AI
+    if critical_missing and use_ai_fallback:
+        return await extract_data_from_text(markdown)
+
+    # If many fields missing (>3) and AI allowed, use AI
+    if len(null_fields) > 3 and use_ai_fallback:
+        return await extract_data_from_text(markdown)
+
+    # Step 4: Convert regex result to DocumentExtraction schema
+    containers = []
+    for c in regex_result.containers:
+        containers.append(ContainerInfo(
+            number=c.get('number'),
+            weight=c.get('weight'),
+            volume=c.get('volume'),
+        ))
+
+    # Map doc_type string to enum
+    doc_type = DocType.UNKNOWN
+    if regex_result.doc_type == 'hbl':
+        doc_type = DocType.HBL
+    elif regex_result.doc_type == 'mbl':
+        doc_type = DocType.MBL
+
+    # Calculate confidence score
+    # Base: 1.0 for Regex
+    confidence = 1.0
+
+    # Penalize for missing critical fields
+    critical_fields = [
+        regex_result.bl_number,
+        regex_result.shipper_name,
+        regex_result.consignee_name,
+        regex_result.carrier_name,
+        containers  # Must have at least one container
+    ]
+    missing_count = sum(1 for f in critical_fields if not f)
+    penalty = (missing_count / len(critical_fields)) * 0.5
+    confidence = max(0.5, confidence - penalty)
+
+    return DocumentExtraction(
+        doc_type=doc_type,
+        bl_number=regex_result.bl_number,
+        shipper_name=regex_result.shipper_name,
+        consignee_name=regex_result.consignee_name,
+        notify_party_name=regex_result.notify_party_name,
+        carrier_name=regex_result.carrier_name,
+        port_of_loading=regex_result.port_of_loading,
+        port_of_discharge=regex_result.port_of_discharge,
+        place_of_receipt=regex_result.place_of_receipt,
+        place_of_delivery=regex_result.place_of_delivery,
+        etd=regex_result.etd,
+        eta=regex_result.eta,
+        containers=containers,
+        raw_text_excerpt=regex_result.raw_text_excerpt,
+        extraction_confidence=round(confidence, 2),
+    )
