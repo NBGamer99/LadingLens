@@ -60,14 +60,17 @@ async def get_document_count(collection_name: str) -> int:
 
     return 0
 
-async def get_documents(collection_name: str, limit: int = 4, cursor: Optional[str] = None) -> Dict[str, Any]:
+async def get_documents(collection_name: str, limit: int = 4, cursor: Optional[str] = None, filters: Dict[str, Any] = None) -> Dict[str, Any]:
     """
-    Fetch documents with cursor-based pagination.
+    Fetch documents with cursor-based pagination and optional filtering.
+    Filters are applied in-memory to avoid Firestore composite index requirements.
     Returns: { items: [...], next_cursor: str | None, has_more: bool }
     """
     database = get_db()
-    # Request one extra to determine if there are more results
-    query = database.collection(collection_name).order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit + 1)
+
+    # Base query - only order by created_at (no filters at DB level to avoid index issues)
+    query = database.collection(collection_name)
+    query = query.order_by("created_at", direction=firestore.Query.DESCENDING)
 
     if cursor:
         # Cursor is a document ID (dedupe_key)
@@ -75,23 +78,46 @@ async def get_documents(collection_name: str, limit: int = 4, cursor: Optional[s
         if cursor_doc.exists:
             query = query.start_after(cursor_doc)
 
+    # Fetch more documents than needed to account for filtering
+    fetch_limit = (limit + 1) * 10 if filters else limit + 1
+    query = query.limit(fetch_limit)
+
     docs = list(query.stream())
 
-    # Check if there are more results
-    has_more = len(docs) > limit
-    if has_more:
-        docs = docs[:limit]  # Trim to requested limit
-
-    items = []
-    last_doc_id = None
+    # Apply filters in-memory
+    filtered_items = []
     for d in docs:
         doc_dict = d.to_dict()
-        doc_dict['id'] = d.id  # Include document ID for cursor
-        items.append(doc_dict)
-        last_doc_id = d.id
+        doc_dict['id'] = d.id
+
+        # Check filters
+        if filters:
+            match = True
+            if "carrier" in filters and doc_dict.get("carrier_name") != filters["carrier"]:
+                match = False
+            if "pol" in filters and doc_dict.get("port_of_loading") != filters["pol"]:
+                match = False
+            if "pod" in filters and doc_dict.get("port_of_discharge") != filters["pod"]:
+                match = False
+
+            if not match:
+                continue
+
+        filtered_items.append(doc_dict)
+
+        # Stop early if we have enough
+        if len(filtered_items) > limit:
+            break
+
+    # Check if there are more results
+    has_more = len(filtered_items) > limit
+    if has_more:
+        filtered_items = filtered_items[:limit]
+
+    last_doc_id = filtered_items[-1]['id'] if filtered_items else None
 
     return {
-        "items": items,
+        "items": filtered_items,
         "next_cursor": last_doc_id if has_more else None,
         "has_more": has_more
     }
@@ -277,3 +303,36 @@ async def get_recent_job_errors(limit: int = 10) -> List[Dict[str, Any]]:
             break
 
     return incidents
+
+
+async def get_filter_options() -> Dict[str, List[str]]:
+    """
+    Fetch distinct values for filter dropdowns.
+    Returns unique carriers, ports of loading, and ports of discharge
+    from both HBL and MBL collections.
+    """
+    database = get_db()
+
+    carriers = set()
+    pols = set()
+    pods = set()
+
+    # Query both collections
+    for collection_name in ["hbl", "mbl"]:
+        collection_ref = database.collection(collection_name)
+        docs = list(collection_ref.stream())
+
+        for doc in docs:
+            data = doc.to_dict()
+            if data.get("carrier_name"):
+                carriers.add(data["carrier_name"])
+            if data.get("port_of_loading"):
+                pols.add(data["port_of_loading"])
+            if data.get("port_of_discharge"):
+                pods.add(data["port_of_discharge"])
+
+    return {
+        "carriers": sorted(list(carriers)),
+        "pols": sorted(list(pols)),
+        "pods": sorted(list(pods))
+    }

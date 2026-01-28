@@ -12,13 +12,13 @@ export const DocType = {
 } as const;
 export type DocType = typeof DocType[keyof typeof DocType];
 
-export interface ContainerInfo {
+export type ContainerInfo = {
     weight?: string;
     volume?: string;
     number?: string;
-}
+};
 
-export interface ExtractionResult {
+export type ExtractionResult = {
     id?: string; // Virtual ID for UI
     doc_type: DocType;
     bl_number?: string;
@@ -49,19 +49,19 @@ export interface ExtractionResult {
 
     extraction_confidence?: number;
     raw_text_excerpt?: string;
-}
+};
 
-export interface ProcessingSummary {
+export type ProcessingSummary = {
     emails_processed: number;
     attachments_processed: number;
     docs_created: number;
     skipped_duplicates: number;
     errors: number;
-}
+};
 
-export interface PaginatedResponse<T = ExtractionResult> {
+export type PaginatedResponse<T = ExtractionResult> = {
     items: T[];
     next_cursor: string | null;
     has_more: boolean;
-}
+};
 

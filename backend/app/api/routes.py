@@ -85,19 +85,47 @@ async def process_emails_endpoint(
 
 
 @router.get("/hbl", response_model=PaginatedResponse)
-async def get_hbl(limit: int = Query(4, ge=1, le=100), cursor: Optional[str] = Query(None)):
+async def get_hbl(
+    limit: int = Query(4, ge=1, le=100),
+    cursor: Optional[str] = Query(None),
+    carrier: Optional[str] = Query(None, description="Filter by carrier name"),
+    pol: Optional[str] = Query(None, description="Filter by Port of Loading"),
+    pod: Optional[str] = Query(None, description="Filter by Port of Discharge")
+):
     """
-    Get HBL documents with cursor-based pagination.
+    Get HBL documents with cursor-based pagination and optional filters.
     """
-    result = await firestore_service.get_documents("hbl", limit, cursor)
+    filters = {
+        "carrier": carrier,
+        "pol": pol,
+        "pod": pod
+    }
+    # Remove None values
+    filters = {k: v for k, v in filters.items() if v is not None}
+
+    result = await firestore_service.get_documents("hbl", limit, cursor, filters)
     return PaginatedResponse(**result)
 
 @router.get("/mbl", response_model=PaginatedResponse)
-async def get_mbl(limit: int = Query(4, ge=1, le=100), cursor: Optional[str] = Query(None)):
+async def get_mbl(
+    limit: int = Query(4, ge=1, le=100),
+    cursor: Optional[str] = Query(None),
+    carrier: Optional[str] = Query(None, description="Filter by carrier name"),
+    pol: Optional[str] = Query(None, description="Filter by Port of Loading"),
+    pod: Optional[str] = Query(None, description="Filter by Port of Discharge")
+):
     """
-    Get MBL documents with cursor-based pagination.
+    Get MBL documents with cursor-based pagination and optional filters.
     """
-    result = await firestore_service.get_documents("mbl", limit, cursor)
+    filters = {
+        "carrier": carrier,
+        "pol": pol,
+        "pod": pod
+    }
+    # Remove None values
+    filters = {k: v for k, v in filters.items() if v is not None}
+
+    result = await firestore_service.get_documents("mbl", limit, cursor, filters)
     return PaginatedResponse(**result)
 
 @router.get("/stats", response_model=DashboardStats)
@@ -145,3 +173,16 @@ async def get_incidents(limit: int = Query(10, ge=1, le=50)):
     return IncidentListResponse(items=incidents)
 
 
+class FilterOptionsResponse(BaseModel):
+    """Available filter options from existing data."""
+    carriers: List[str]
+    pols: List[str]
+    pods: List[str]
+
+@router.get("/filter-options", response_model=FilterOptionsResponse)
+async def get_filter_options():
+    """
+    Get available filter options (distinct values from existing documents).
+    """
+    options = await firestore_service.get_filter_options()
+    return FilterOptionsResponse(**options)

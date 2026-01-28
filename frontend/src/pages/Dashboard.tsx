@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
 import type { ExtractionResult, ProcessingSummary } from "../types";
 import {
@@ -9,6 +9,8 @@ import {
 } from "../components/DataTable";
 import { Header } from "../components/Header";
 import { ProcessButton, StatCard } from "../components/ActionComponents";
+import { Filters } from "../components/Filters";
+import { DetailsModal } from "../components/DetailsModal";
 import {
   FileSearch,
   Layers,
@@ -22,6 +24,15 @@ const PAGE_SIZE = 4;
 
 export function Dashboard() {
   const [activeTab, setActiveTab] = useState<"hbl" | "mbl">("hbl");
+
+  // Filter State
+  const [filters, setFilters] = useState({});
+
+  // Details Modal State
+  const [selectedItem, setSelectedItem] = useState<ExtractionResult | null>(
+    null,
+  );
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Separate state for each tab's data and pagination
   const [hblData, setHblData] = useState<ExtractionResult[]>([]);
@@ -42,13 +53,13 @@ export function Dashboard() {
     null,
   );
 
-  const loadData = async () => {
+  const loadData = useCallback(async (currentFilters = {}) => {
     setIsLoadingData(true);
     setError(null);
     try {
       const [hblResponse, mblResponse, incidentsResponse] = await Promise.all([
-        api.getHBLs(PAGE_SIZE),
-        api.getMBLs(PAGE_SIZE),
+        api.getHBLs(PAGE_SIZE, undefined, currentFilters),
+        api.getMBLs(PAGE_SIZE, undefined, currentFilters),
         api.getIncidents(10),
       ]);
 
@@ -69,19 +80,19 @@ export function Dashboard() {
     } finally {
       setIsLoadingData(false);
     }
-  };
+  }, []);
 
   const loadMore = async () => {
     setIsLoadingMore(true);
     setError(null);
     try {
       if (activeTab === "hbl" && hblCursor) {
-        const response = await api.getHBLs(PAGE_SIZE, hblCursor);
+        const response = await api.getHBLs(PAGE_SIZE, hblCursor, filters);
         setHblData((prev) => [...prev, ...response.items]);
         setHblCursor(response.next_cursor);
         setHblHasMore(response.has_more);
       } else if (activeTab === "mbl" && mblCursor) {
-        const response = await api.getMBLs(PAGE_SIZE, mblCursor);
+        const response = await api.getMBLs(PAGE_SIZE, mblCursor, filters);
         setMblData((prev) => [...prev, ...response.items]);
         setMblCursor(response.next_cursor);
         setMblHasMore(response.has_more);
@@ -95,8 +106,21 @@ export function Dashboard() {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    loadData(filters);
+  }, [loadData]);
+
+  const handleFilterChange = useCallback(
+    (newFilters: any) => {
+      setFilters(newFilters);
+      loadData(newFilters);
+    },
+    [loadData],
+  );
+
+  const handleViewDetails = (item: ExtractionResult) => {
+    setSelectedItem(item);
+    setIsModalOpen(true);
+  };
 
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -110,7 +134,7 @@ export function Dashboard() {
       const summary = await api.triggerProcessing();
       setLastSummary(summary);
       // Reload data after processing completes
-      await loadData();
+      await loadData(filters);
     } catch (err: any) {
       console.error("Processing error:", err);
       if (err.response?.status === 401) {
@@ -215,6 +239,19 @@ export function Dashboard() {
         </span>
       ),
     },
+    {
+      header: "",
+      width: "50px",
+      cell: (row: any) => (
+        <button
+          onClick={() => handleViewDetails(row)}
+          className="text-gray-400 hover:text-purple-600 transition-colors p-1"
+          title="View Details"
+        >
+          <FileSearch className="w-4 h-4" />
+        </button>
+      ),
+    },
   ];
 
   const currentData = activeTab === "hbl" ? hblData : mblData;
@@ -271,7 +308,7 @@ export function Dashboard() {
               <span className="text-sm font-medium">{error}</span>
             </div>
             <button
-              onClick={() => loadData()}
+              onClick={() => loadData(filters)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
@@ -308,12 +345,12 @@ export function Dashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard
             label="HBLs Extracted"
-            value={hblData.length}
+            value={hblData.length > 0 ? hblData.length : "-"}
             color="text-purple-600"
           />
           <StatCard
             label="MBLs Extracted"
-            value={mblData.length}
+            value={mblData.length > 0 ? mblData.length : "-"}
             color="text-emerald-600"
           />
           <StatCard
@@ -326,6 +363,12 @@ export function Dashboard() {
             color="text-red-500"
           />
         </div>
+
+        {/* Filters */}
+        <Filters
+          onFilterChange={handleFilterChange}
+          isLoading={isLoadingData}
+        />
 
         {/* Tabs & Table */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -395,6 +438,13 @@ export function Dashboard() {
           </div>
         </div>
       </main>
+
+      {/* Details Modal */}
+      <DetailsModal
+        data={selectedItem}
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+      />
     </div>
   );
 }

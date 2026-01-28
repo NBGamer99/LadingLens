@@ -16,16 +16,16 @@ export const api = {
         return response.data;
     },
 
-    getHBLs: async (limit: number = 4, cursor?: string): Promise<PaginatedResponse<ExtractionResult>> => {
+    getHBLs: async (limit: number = 4, cursor?: string, filters?: Record<string, any>): Promise<PaginatedResponse<ExtractionResult>> => {
         const response = await client.get<PaginatedResponse<ExtractionResult>>('/hbl', {
-            params: { limit, cursor }
+            params: { limit, cursor, ...filters }
         });
         return response.data;
     },
 
-    getMBLs: async (limit: number = 4, cursor?: string): Promise<PaginatedResponse<ExtractionResult>> => {
+    getMBLs: async (limit: number = 4, cursor?: string, filters?: Record<string, any>): Promise<PaginatedResponse<ExtractionResult>> => {
         const response = await client.get<PaginatedResponse<ExtractionResult>>('/mbl', {
-            params: { limit, cursor }
+            params: { limit, cursor, ...filters }
         });
         return response.data;
     },
@@ -34,6 +34,11 @@ export const api = {
         const response = await client.get<{ items: any[] }>('/incidents', {
             params: { limit }
         });
+        return response.data;
+    },
+
+    getFilterOptions: async (): Promise<{ carriers: string[], pols: string[], pods: string[] }> => {
+        const response = await client.get<{ carriers: string[], pols: string[], pods: string[] }>('/filter-options');
         return response.data;
     }
 };
