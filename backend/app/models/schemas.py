@@ -37,10 +37,16 @@ class ContainerInfo(BaseModel):
                 return None
         return v
 
+class ExtractionMethod(str, Enum):
+    REGEX = "regex"
+    AI = "ai"
+    UNKNOWN = "unknown"
+
 class DocumentExtraction(BaseModel):
     doc_type: DocType
     bl_number: Optional[str] = None
     email_status: EmailStatus = EmailStatus.UNKNOWN
+    extraction_method: ExtractionMethod = ExtractionMethod.UNKNOWN
     raw_text_excerpt: Optional[str] = None
     extraction_confidence: Optional[float] = None
 

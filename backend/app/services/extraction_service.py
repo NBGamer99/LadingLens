@@ -7,7 +7,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.ollama import OllamaProvider
 from app.config import settings
-from app.models.schemas import DocumentExtraction
+from app.models.schemas import DocumentExtraction, ExtractionMethod
 
 # Lazy-loaded agent to avoid errors at import time
 _extraction_agent: Optional[Agent] = None
@@ -111,6 +111,7 @@ async def extract_with_ai(text: str) -> DocumentExtraction:
                 f"Extract data from this document text:\n\nDOCUMENT TEXT:\n{truncated_text}"
             )
             ai_data = result.output
+            ai_data.extraction_method = ExtractionMethod.AI
             return ai_data
 
         except Exception as e:
@@ -120,6 +121,7 @@ async def extract_with_ai(text: str) -> DocumentExtraction:
                 print(f"        ⚠️  Transient API error (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {delay}s...")
                 await asyncio.sleep(delay)
             else:
+                print(f"      ❌ AI Extraction failed: {e}")
                 raise
     raise last_error
 
@@ -147,13 +149,18 @@ async def extract_shipment_data(markdown: str, use_ai_fallback: bool = True) -> 
     # Step 1: Check if this is a scanned/image PDF
     if is_scanned_pdf(markdown):
         # No structure - must use AI
+        print("      ℹ️  Scanned PDF detected. Using AI extraction directly.")
         if use_ai_fallback:
             return await extract_with_ai(markdown)
         else:
             # Return empty result
-            return DocumentExtraction(doc_type=DocType.UNKNOWN)
+            return DocumentExtraction(
+                doc_type=DocType.UNKNOWN,
+                extraction_method=ExtractionMethod.UNKNOWN
+            )
 
     # Step 2: Try regex extraction (fast)
+    print("      ℹ️  Attempting Regex extraction...")
     regex_result = extract_all(markdown)
 
     # Step 3: Check for critical missing fields
@@ -162,13 +169,18 @@ async def extract_shipment_data(markdown: str, use_ai_fallback: bool = True) -> 
     # Critical fields that must be present
     critical_missing = any(f in null_fields for f in ['doc_type', 'bl_number'])
 
-    # If critical fields missing and AI allowed, use AI
-    if critical_missing and use_ai_fallback:
-        return await extract_data_from_text(markdown)
+    if critical_missing:
+        print(f"      🔸 Regex failed validation: Missing critical fields (doc_type or bl_number).")
+        if use_ai_fallback:
+            print("      🔄 Switching to AI approach...")
+            return await extract_with_ai(markdown)
 
     # If many fields missing (>3) and AI allowed, use AI
-    if len(null_fields) > 3 and use_ai_fallback:
-        return await extract_data_from_text(markdown)
+    if len(null_fields) > 3:
+        print(f"      🔸 Regex warning: {len(null_fields)} fields are null ({', '.join(null_fields[:3])}...).")
+        if use_ai_fallback:
+             print("      🔄 Switching to AI approach for better completeness...")
+             return await extract_with_ai(markdown)
 
     # Step 4: Convert regex result to DocumentExtraction schema
     containers = []
@@ -218,4 +230,5 @@ async def extract_shipment_data(markdown: str, use_ai_fallback: bool = True) -> 
         containers=containers,
         raw_text_excerpt=regex_result.raw_text_excerpt,
         extraction_confidence=round(confidence, 2),
+        extraction_method=ExtractionMethod.REGEX,
     )

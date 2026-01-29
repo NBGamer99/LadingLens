@@ -197,10 +197,10 @@ async def process_emails(job_id: str, skip_dedupe: bool = False) -> ProcessingSu
                                     summary.skipped_duplicates += 1
                                     continue
 
-                            print(f"      Page {page['page_num']}: 🤖 Extracting with Hybrid Regex+AI...")
+                            print(f"      Page {page['page_num']}: 🔍 Starting extraction...")
                             try:
                                 # Use hybrid extraction (regex primary, AI fallback)
-                                extraction = await extraction_service.extract_shipment_data(text)
+                                extraction = await extraction_service.extract_shipment_data(text, use_ai_fallback=True)
                                 # Override email_status from our heuristic if it's UNKNOWN
                                 if extraction.email_status == EmailStatus.UNKNOWN:
                                     extraction.email_status = email_status
@@ -223,7 +223,7 @@ async def process_emails(job_id: str, skip_dedupe: bool = False) -> ProcessingSu
 
                                 if result.doc_type != "unknown":
                                     await firestore_service.upsert_document(collection, dedupe_key, result.model_dump())
-                                    print(f"      Page {page['page_num']}: ✅ Saved as {result.doc_type.value.upper()} ({result.bl_number})")
+                                    print(f"      Page {page['page_num']}: ✅ Saved as {result.doc_type.value.upper()} ({result.bl_number}) - Method: {result.extraction_method.value.upper()}")
                                     summary.docs_created += 1
                                     await firestore_service.append_job_log(
                                         job_id, LogLevel.INFO.value,
