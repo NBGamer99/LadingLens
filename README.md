@@ -26,7 +26,8 @@
 
 <br />
 
-> [!NOTE] **Why does this exist?** Because manually copying container numbers from PDFs is a violation of human rights. This tool automates the extraction of Bill of Lading (HBL/MBL) data from Gmail to Firestore.
+> [!NOTE]
+> **Why does this exist?** Because manually copying container numbers from PDFs is a violation of human rights. This tool automates the extraction of Bill of Lading (HBL/MBL) data from Gmail to Firestore.
 
 ---
 
@@ -54,7 +55,7 @@ Since this is a public repo, you need your own credentials:
 2.  Create a project and enable **Gmail API** and **Cloud Firestore API**.
 3.  Go to **APIs & Services > Credentials**.
 4.  Create **OAuth 2.0 Client ID** (Application type: Desktop app).
-5.  Download the JSON, rename it to `credentials.json`, and place it in the `backend/` folder.
+5.  Download the JSON, rename it to `credentials.json`, and place it in the `secrets` folder.
 6.  Create a Service Account for Firestore, generate a key (JSON), and save the path for the `.env`.
 
 ### 1. Backend Setup
@@ -73,12 +74,12 @@ pip install -r requirements.txt
 ```
 
 #### Configuration (`.env`)
-Create a `.env` file in `backend/` based on `.env.example`:
+Create a `.env` file in `root folder` based on `.env.example`:
 
 ```ini
-# backend/.env
+# .env
 GOOGLE_APPLICATION_CREDENTIALS="path/to/your/firebase-service-account.json"
-GMAIL_CREDENTIALS_FILE="credentials.json" # Your OAuth client secrets
+GMAIL_CREDENTIALS_FILE="path/to/your/credentials.json"
 LLM_PROVIDER="ollama" # or "anthropic"
 ```
 
